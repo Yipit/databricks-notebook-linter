@@ -907,3 +907,47 @@ def test_fix_file_when_magic_only_in_finally_is_idempotent(notebook):
     assert fix_file(filepath) is False
     second_pass = notebook.read()
     assert first_pass == second_pass
+
+
+# --- Multiline continuation inside a block ---
+
+
+def test_fix_file_when_multiline_continuation_inside_block_preserves_indent(notebook):
+    """Multiline continuation inside a conditional block must prefix all lines."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if ENV == "serverless":
+            %pip install -U \\
+              transformers \\
+              datasets
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert '# MAGIC if ENV == "serverless":\n' in content
+    assert "# MAGIC     %pip install -U \\\n" in content
+    assert "# MAGIC       transformers \\\n" in content
+    assert "# MAGIC       datasets\n" in content
+
+
+def test_fix_file_when_multiline_continuation_inside_block_is_idempotent(notebook):
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if ENV == "serverless":
+            %pip install -U \\
+              transformers \\
+              datasets
+    """)
+
+    assert fix_file(filepath) is True
+    first_pass = notebook.read()
+    assert '# MAGIC if ENV == "serverless":\n' in first_pass
+    assert fix_file(filepath) is False
+    second_pass = notebook.read()
+    assert first_pass == second_pass
