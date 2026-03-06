@@ -951,3 +951,112 @@ def test_fix_file_when_multiline_continuation_inside_block_is_idempotent(noteboo
     assert fix_file(filepath) is False
     second_pass = notebook.read()
     assert first_pass == second_pass
+
+
+# --- Additional edge case tests ---
+
+
+def test_fix_file_when_block_has_blank_line_between_starter_and_magic(notebook):
+    """Blank lines inside a block should stay blank, surrounding lines prefixed."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if ENV == "dev":
+
+            %pip install debug-tools
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert '# MAGIC if ENV == "dev":\n' in content
+    assert "# MAGIC     %pip install debug-tools\n" in content
+    # The blank line between if and %pip should remain blank (not prefixed)
+    lines = content.splitlines()
+    block_start = next(i for i, line in enumerate(lines) if "# MAGIC if" in line)
+    assert lines[block_start + 1].strip() == ""
+
+
+def test_fix_file_when_with_statement_contains_magic(notebook):
+    """A with block containing magic must prefix the entire block."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        with open("/tmp/log") as f:
+            %pip install debug-tools
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert '# MAGIC with open("/tmp/log") as f:\n' in content
+    assert "# MAGIC     %pip install debug-tools\n" in content
+
+
+def test_fix_file_when_triple_nested_blocks_all_prefixed(notebook):
+    """Three levels of nesting: if > for > if > magic, all prefixed."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if USE_GPU:
+            for pkg in PACKAGES:
+                if pkg.startswith("nvidia"):
+                    %pip install {pkg}
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert "# MAGIC if USE_GPU:\n" in content
+    assert "# MAGIC     for pkg in PACKAGES:\n" in content
+    assert '# MAGIC         if pkg.startswith("nvidia"):\n' in content
+    assert "# MAGIC             %pip install {pkg}\n" in content
+
+
+def test_fix_file_when_magic_in_separate_cells_both_fixed(notebook):
+    """Two cells each with bare magic -- both must be fixed independently."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        %pip install foo
+
+        # COMMAND ----------
+
+        %pip install bar
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert "# MAGIC %pip install foo\n" in content
+    assert "# MAGIC %pip install bar\n" in content
+
+
+def test_fix_file_when_cell_without_magic_not_touched(notebook):
+    """In a multi-cell notebook, cells without magic must be left untouched."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        import math
+        x = math.pi
+
+        # COMMAND ----------
+
+        %pip install foo
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    # Clean cell untouched
+    assert "import math\n" in content
+    assert "x = math.pi\n" in content
+    assert "# MAGIC import math" not in content
+    assert "# MAGIC x = math" not in content
+    # Dirty cell fixed
+    assert "# MAGIC %pip install foo\n" in content
