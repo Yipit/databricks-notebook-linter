@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Prevent credential leaks in `uv-publish.py` by catching publish failures without exposing the full command (including credentials) in a traceback (`e0d4f08`)
+
+### Changed
+
+- `push-release` Makefile target now creates a GitHub Release with release notes extracted from `CHANGELOG.md` and attaches built distribution artifacts (`d3c234e`)
+- `tag-release` Makefile target now validates that a `CHANGELOG.md` entry exists for the target version before proceeding (`bee2f90`)
+- Fixed repository URLs in `README.md` and `pyproject.toml` to use the correct GitHub org name (`d3c234e`)
+
 ## 0.1.0
 
 Initial release.
