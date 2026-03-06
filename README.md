@@ -44,7 +44,13 @@ repos:
       - id: fix-databricks-magic
 ```
 
-The hook runs with `--fix` by default, automatically rewriting files.
+By default the hook runs in check mode -- it reports unfixed magic commands and fails without modifying files. To auto-fix files on commit, pass `--fix`:
+
+```yaml
+hooks:
+  - id: fix-databricks-magic
+    args: [--fix]
+```
 
 ### As a CLI tool
 
