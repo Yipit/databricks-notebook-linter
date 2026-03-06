@@ -42,10 +42,22 @@ packages = ["src/databricks_notebook_linter"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+addopts = "--cov=databricks_notebook_linter --cov-branch --cov-report=term-missing"
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=7.0.0",
     "ruff>=0.14.0",
 ]
 

@@ -520,6 +520,116 @@ def test_fix_file_when_triple_nested_blocks_all_prefixed(notebook):
     assert "# MAGIC             %pip install {pkg}\n" in content
 
 
+def test_fix_file_when_indented_magic_without_enclosing_block(notebook):
+    """Indented magic with no block starter above it should still be prefixed."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+            %pip install foo
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert "# MAGIC     %pip install foo" in content
+
+
+def test_fix_file_when_blank_line_between_if_block_and_else(notebook):
+    """Blank line between if body and else during compound walk-back."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if ENV == "prod":
+            print("production")
+
+        else:
+            %pip install debug-tools
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert '# MAGIC if ENV == "prod":\n' in content
+    assert '# MAGIC     print("production")\n' in content
+    assert "# MAGIC else:\n" in content
+    assert "# MAGIC     %pip install debug-tools\n" in content
+
+
+def test_fix_file_when_compound_continuation_at_cell_start(notebook):
+    """Compound continuation (else:) at the very start of a cell -- degenerate but handled."""
+    path = notebook.path
+    # Write raw content to avoid dedent issues with the unusual structure
+    path.write_text(
+        "# Databricks notebook source\n"
+        "\n"
+        "# COMMAND ----------\n"
+        "\n"
+        "else:\n"
+        "    %pip install foo\n"
+    )
+
+    assert fix_file(str(path)) is True
+    content = path.read_text()
+    assert "# MAGIC else:\n" in content
+    assert "# MAGIC     %pip install foo\n" in content
+
+
+def test_fix_file_when_python_follows_block_containing_magic(notebook):
+    """Regular Python after a block with magic -- the block is prefixed, the trailing line is not."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if ENV == "dev":
+            %pip install foo
+        x = 1
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert '# MAGIC if ENV == "dev":\n' in content
+    assert "# MAGIC     %pip install foo\n" in content
+    assert "x = 1\n" in content
+    assert "# MAGIC x = 1" not in content
+
+
+def test_fix_file_when_consecutive_cell_separators(notebook):
+    """Two COMMAND separators with no content between them."""
+    path = notebook.path
+    path.write_text(
+        "# Databricks notebook source\n"
+        "# COMMAND ----------\n"
+        "# COMMAND ----------\n"
+        "\n"
+        "%pip install foo\n"
+    )
+
+    assert fix_file(str(path)) is True
+    content = path.read_text()
+    assert "# MAGIC %pip install foo\n" in content
+
+
+def test_fix_file_when_notebook_ends_at_cell_separator(notebook):
+    """Notebook whose last line is a cell separator with no trailing content."""
+    path = notebook.path
+    path.write_text(
+        "# Databricks notebook source\n"
+        "\n"
+        "# COMMAND ----------\n"
+        "\n"
+        "%pip install foo\n"
+        "\n"
+        "# COMMAND ----------\n"
+    )
+
+    assert fix_file(str(path)) is True
+    content = path.read_text()
+    assert "# MAGIC %pip install foo\n" in content
+
+
 def test_fix_file_when_magic_in_separate_cells_both_fixed(notebook):
     """Two cells each with bare magic -- both must be fixed independently."""
     filepath = notebook.write("""\

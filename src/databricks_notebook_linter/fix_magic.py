@@ -250,7 +250,7 @@ def fix_file(filepath: str) -> bool:
             new_lines.append(line)
 
     new_content = "".join(new_lines)
-    if new_content == original:
+    if new_content == original:  # pragma: no cover - defensive; analysis filters already-magic lines
         return False
 
     with open(filepath, "w") as f:
@@ -297,5 +297,5 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
