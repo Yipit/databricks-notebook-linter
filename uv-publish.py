@@ -36,7 +36,10 @@ def publish_with_uv(index_name: str):
     safe_cmd[5] = "********"
     safe_cmd[7] = "********"
     print("Running:", " ".join(safe_cmd))
-    subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print(f"Error: uv publish exited with status {result.returncode}")
+        sys.exit(result.returncode)
 
 
 if __name__ == "__main__":
