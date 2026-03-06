@@ -54,6 +54,7 @@ tag-release: _check-version _check-clean _check-branch _check-tag-free lint test
 push-release: _check-version _check-tag-exists publish
 	@git push origin main
 	@git push origin "v$(VERSION)"
+	@gh release create "v$(VERSION)" --generate-notes dist/*
 	@echo "==> Published and pushed v$(VERSION)"
 
 # Usage: make release VERSION=x.y.z

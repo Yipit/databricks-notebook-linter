@@ -23,9 +23,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yipitdata/databricks-notebook-linter"
-Repository = "https://github.com/yipitdata/databricks-notebook-linter"
-Issues = "https://github.com/yipitdata/databricks-notebook-linter/issues"
+Homepage = "https://github.com/Yipit/databricks-notebook-linter"
+Repository = "https://github.com/Yipit/databricks-notebook-linter"
+Issues = "https://github.com/Yipit/databricks-notebook-linter/issues"
 
 [project.scripts]
 fix-databricks-magic = "databricks_notebook_linter.fix_magic:main"
