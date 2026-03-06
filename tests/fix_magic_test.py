@@ -726,3 +726,184 @@ def test_main_with_multiple_files(tmp_path, capsys, monkeypatch):
     captured = capsys.readouterr()
     assert "%pip install foo" in captured.out
     assert "clean.py" not in captured.out
+
+
+# --- Magic in else/elif/except/finally (bug fix) ---
+
+
+def test_fix_file_when_magic_only_in_else_prefixes_entire_if_else(notebook):
+    """Magic only in else branch -- entire if/else must be prefixed."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if ENV == "prod":
+            print("production")
+        else:
+            %pip install debug-tools
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert '# MAGIC if ENV == "prod":\n' in content
+    assert '# MAGIC     print("production")\n' in content
+    assert "# MAGIC else:\n" in content
+    assert "# MAGIC     %pip install debug-tools\n" in content
+
+
+def test_fix_file_when_magic_only_in_else_is_idempotent(notebook):
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if ENV == "prod":
+            print("production")
+        else:
+            %pip install debug-tools
+    """)
+
+    assert fix_file(filepath) is True
+    first_pass = notebook.read()
+    # Verify correctness (entire block prefixed, not just the else branch)
+    assert '# MAGIC if ENV == "prod":\n' in first_pass
+    assert "# MAGIC else:\n" in first_pass
+    assert fix_file(filepath) is False
+    second_pass = notebook.read()
+    assert first_pass == second_pass
+
+
+def test_fix_file_when_magic_only_in_elif_prefixes_entire_chain(notebook):
+    """Magic only in elif branch -- entire if/elif/else chain must be prefixed."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if ENV == "prod":
+            print("production")
+        elif ENV == "dev":
+            %pip install dev-tools
+        else:
+            print("other")
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert '# MAGIC if ENV == "prod":\n' in content
+    assert '# MAGIC     print("production")\n' in content
+    assert '# MAGIC elif ENV == "dev":\n' in content
+    assert "# MAGIC     %pip install dev-tools\n" in content
+    assert "# MAGIC else:\n" in content
+    assert '# MAGIC     print("other")\n' in content
+
+
+def test_fix_file_when_magic_only_in_elif_is_idempotent(notebook):
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if ENV == "prod":
+            print("production")
+        elif ENV == "dev":
+            %pip install dev-tools
+        else:
+            print("other")
+    """)
+
+    assert fix_file(filepath) is True
+    first_pass = notebook.read()
+    # Verify correctness (entire chain prefixed, not just elif onward)
+    assert '# MAGIC if ENV == "prod":\n' in first_pass
+    assert '# MAGIC elif ENV == "dev":\n' in first_pass
+    assert fix_file(filepath) is False
+    second_pass = notebook.read()
+    assert first_pass == second_pass
+
+
+def test_fix_file_when_magic_only_in_except_prefixes_entire_try_except(notebook):
+    """Magic only in except branch -- entire try/except must be prefixed."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        try:
+            import pandas
+        except:
+            %pip install pandas
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert "# MAGIC try:\n" in content
+    assert "# MAGIC     import pandas\n" in content
+    assert "# MAGIC except:\n" in content
+    assert "# MAGIC     %pip install pandas\n" in content
+
+
+def test_fix_file_when_magic_only_in_except_is_idempotent(notebook):
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        try:
+            import pandas
+        except:
+            %pip install pandas
+    """)
+
+    assert fix_file(filepath) is True
+    first_pass = notebook.read()
+    # Verify correctness (entire try/except prefixed, not just except)
+    assert "# MAGIC try:\n" in first_pass
+    assert "# MAGIC except:\n" in first_pass
+    assert fix_file(filepath) is False
+    second_pass = notebook.read()
+    assert first_pass == second_pass
+
+
+def test_fix_file_when_magic_only_in_finally_prefixes_entire_try_finally(notebook):
+    """Magic only in finally branch -- entire try/finally must be prefixed."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        try:
+            import pandas
+        finally:
+            %pip install pandas
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert "# MAGIC try:\n" in content
+    assert "# MAGIC     import pandas\n" in content
+    assert "# MAGIC finally:\n" in content
+    assert "# MAGIC     %pip install pandas\n" in content
+
+
+def test_fix_file_when_magic_only_in_finally_is_idempotent(notebook):
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        try:
+            import pandas
+        finally:
+            %pip install pandas
+    """)
+
+    assert fix_file(filepath) is True
+    first_pass = notebook.read()
+    # Verify correctness (entire try/finally prefixed, not just finally)
+    assert "# MAGIC try:\n" in first_pass
+    assert "# MAGIC finally:\n" in first_pass
+    assert fix_file(filepath) is False
+    second_pass = notebook.read()
+    assert first_pass == second_pass

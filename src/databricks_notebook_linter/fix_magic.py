@@ -72,6 +72,20 @@ def _find_enclosing_block_start(cell_lines: list[str], idx: int) -> int:
         if not found:
             break
 
+    # If we landed on a compound continuation (else, elif, except, finally),
+    # walk backwards to find the true block opener at the same indent level.
+    stripped = cell_lines[pos].strip()
+    while any(stripped.startswith(c) for c in COMPOUND_CONTINUATIONS):
+        for j in range(pos - 1, -1, -1):
+            if not cell_lines[j].strip():
+                continue
+            if get_indent(cell_lines[j]) <= current_indent:
+                pos = j
+                stripped = cell_lines[pos].strip()
+                break
+        else:
+            break
+
     return pos
 
 
