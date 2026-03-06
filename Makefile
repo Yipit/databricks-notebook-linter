@@ -31,7 +31,7 @@ clean:
 #
 # Validates preconditions, runs tests/lint, bumps version in pyproject.toml
 # and README, commits, and creates an annotated tag. Does NOT push or publish.
-tag-release: _check-version _check-clean _check-branch _check-tag-free lint test
+tag-release: _check-version _check-clean _check-branch _check-tag-free _check-changelog lint test
 	@echo "==> Bumping version to $(VERSION)..."
 	@python3 -c "\
 	import re, pathlib; \
@@ -54,7 +54,13 @@ tag-release: _check-version _check-clean _check-branch _check-tag-free lint test
 push-release: _check-version _check-tag-exists publish
 	@git push origin main
 	@git push origin "v$(VERSION)"
-	@gh release create "v$(VERSION)" --generate-notes dist/*
+	@python3 -c "\
+	import re, pathlib, sys; \
+	text = pathlib.Path('CHANGELOG.md').read_text(); \
+	m = re.search(r'## $(VERSION)\n(.*?)(?=\n## |\Z)', text, re.DOTALL); \
+	sys.exit('Error: no CHANGELOG.md entry for $(VERSION)') if not m else print(m.group(1).strip())" > /tmp/_release_notes.md
+	@gh release create "v$(VERSION)" --notes-file /tmp/_release_notes.md dist/*
+	@rm -f /tmp/_release_notes.md
 	@echo "==> Published and pushed v$(VERSION)"
 
 # Usage: make release VERSION=x.y.z
@@ -76,6 +82,13 @@ _check-branch:
 
 _check-tag-free:
 	@git tag -l "v$(VERSION)" | grep -q . && { echo "Error: tag v$(VERSION) already exists"; exit 1; } || true
+
+_check-changelog:
+	@python3 -c "\
+	import re, pathlib, sys; \
+	text = pathlib.Path('CHANGELOG.md').read_text(); \
+	m = re.search(r'## $(VERSION)\n', text); \
+	sys.exit('Error: no CHANGELOG.md entry for $(VERSION)') if not m else None"
 
 _check-tag-exists:
 	@git tag -l "v$(VERSION)" | grep -q . || { echo "Error: tag v$(VERSION) does not exist. Run 'make tag-release VERSION=$(VERSION)' first."; exit 1; }

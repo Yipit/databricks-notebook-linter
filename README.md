@@ -42,14 +42,14 @@ repos:
     rev: v0.1.0
     hooks:
       - id: fix-databricks-magic
+        args: [--fix]
 ```
 
-By default the hook runs in check mode -- it reports unfixed magic commands and fails without modifying files. To auto-fix files on commit, pass `--fix`:
+This auto-fixes files on commit. To check without modifying files, omit `args`:
 
 ```yaml
 hooks:
   - id: fix-databricks-magic
-    args: [--fix]
 ```
 
 ### As a CLI tool
