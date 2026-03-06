@@ -84,10 +84,23 @@ notebook.py:10: line in block containing magic needs '# MAGIC' prefix
 
 ```bash
 make setup    # install dependencies
-make test     # run tests
+make test     # run tests (with 100% branch coverage enforcement)
 make lint     # run ruff
 make format   # auto-format
 ```
+
+### Releasing
+
+```bash
+# All at once: tag, publish to PyPI, push
+make release VERSION=x.y.z
+
+# Or in two steps:
+make tag-release VERSION=x.y.z    # bump, commit, tag (local only)
+make push-release VERSION=x.y.z   # build, publish to PyPI, push commit + tag
+```
+
+`tag-release` validates a clean working tree on `main`, runs tests and lint, bumps the version in `pyproject.toml` and `README.md`, commits, and creates an annotated tag. `push-release` builds, publishes to PyPI, then pushes. Nothing reaches the remote until the PyPI publish succeeds.
 
 ## License
 
