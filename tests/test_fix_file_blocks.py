@@ -630,6 +630,40 @@ def test_fix_file_when_notebook_ends_at_cell_separator(notebook):
     assert "# MAGIC %pip install foo\n" in content
 
 
+def test_fix_file_when_restart_python_in_conditional_prefixes_block(notebook):
+    """dbutils.library.restartPython() inside a block prefixes the entire block."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if COMPUTE_ENV == "serverless":
+            dbutils.library.restartPython()
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert '# MAGIC if COMPUTE_ENV == "serverless":\n' in content
+    assert "# MAGIC     dbutils.library.restartPython()\n" in content
+
+
+def test_fix_file_when_restart_python_in_conditional_is_idempotent(notebook):
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        if COMPUTE_ENV == "serverless":
+            dbutils.library.restartPython()
+    """)
+
+    assert fix_file(filepath) is True
+    first_pass = notebook.read()
+    assert fix_file(filepath) is False
+    second_pass = notebook.read()
+    assert first_pass == second_pass
+
+
 def test_fix_file_when_magic_in_separate_cells_both_fixed(notebook):
     """Two cells each with bare magic -- both must be fixed independently."""
     filepath = notebook.write("""\

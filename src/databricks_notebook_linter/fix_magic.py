@@ -35,11 +35,17 @@ MAGIC_PREFIXES = (
     "!",
 )
 
+MAGIC_CONTAINS = (
+    "dbutils.library.restartPython()",
+)
+
 COMPOUND_CONTINUATIONS = ("elif ", "else:", "except:", "except ", "finally:")
 
 
 def is_magic_line(stripped: str) -> bool:
-    return any(stripped.startswith(p) for p in MAGIC_PREFIXES)
+    return any(stripped.startswith(p) for p in MAGIC_PREFIXES) or any(
+        c in stripped for c in MAGIC_CONTAINS
+    )
 
 
 def is_already_magic(line: str) -> bool:

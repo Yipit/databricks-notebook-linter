@@ -22,6 +22,7 @@ It handles:
 
 - Single-line magic commands (`%pip`, `%sql`, `%md`, `%sh`, `%fs`, `%run`, `%python`, `%r`, `%scala`)
 - Shell bang commands (`!nvidia-smi`)
+- `dbutils.library.restartPython()` calls
 - Multiline continuations (`%pip install -U \`)
 - Block-level magic -- if a `%pip` or `!` command is inside an `if`, `for`, `try`, or other block, the entire block is prefixed
 - Nested blocks -- magic three levels deep prefixes all enclosing levels

@@ -306,6 +306,45 @@ def test_fix_file_when_md_magic_prepends_magic(notebook):
     assert "# MAGIC %md # My Notebook Title" in content
 
 
+def test_fix_file_when_bare_restart_python_prepends_magic(notebook):
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        dbutils.library.restartPython()
+    """)
+
+    assert fix_file(filepath) is True
+    content = notebook.read()
+    assert "# MAGIC dbutils.library.restartPython()" in content
+
+
+def test_fix_file_when_restart_python_already_has_magic_returns_false(notebook):
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        # MAGIC dbutils.library.restartPython()
+    """)
+
+    assert fix_file(filepath) is False
+
+
+def test_fix_file_when_restart_python_is_idempotent(notebook):
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        dbutils.library.restartPython()
+    """)
+
+    assert fix_file(filepath) is True
+    assert fix_file(filepath) is False
+
+
 def test_fix_file_when_empty_notebook_returns_false(notebook):
     filepath = notebook.write("""\
         # Databricks notebook source

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Detect and prefix `dbutils.library.restartPython()` calls with `# MAGIC`, including when nested inside conditional or loop blocks
+
 ### Fixed
 
 - Prevent credential leaks in `uv-publish.py` by catching publish failures without exposing the full command (including credentials) in a traceback (`e0d4f08`)
