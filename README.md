@@ -23,8 +23,10 @@ It handles:
 - Single-line magic commands (`%pip`, `%sql`, `%md`, `%sh`, `%fs`, `%run`, `%python`, `%r`, `%scala`)
 - Shell bang commands (`!nvidia-smi`)
 - Multiline continuations (`%pip install -U \`)
-- Conditional magic (`if COND: %pip install foo` -- prefixes both the `if` and the `%pip`)
-- Mixed cells (leaves regular Python lines alone, only prefixes magic lines)
+- Block-level magic -- if a `%pip` or `!` command is inside an `if`, `for`, `try`, or other block, the entire block is prefixed
+- Nested blocks -- magic three levels deep prefixes all enclosing levels
+- Compound blocks -- `if/elif/else`, `try/except/finally` treated as single units
+- Mixed cells -- regular Python lines outside blocks are left untouched
 
 The tool is idempotent -- running it twice produces the same result.
 
@@ -42,34 +44,43 @@ repos:
       - id: fix-databricks-magic
 ```
 
+The hook runs with `--fix` by default, automatically rewriting files.
+
 ### As a CLI tool
 
 ```bash
 pip install databricks-notebook-linter
+
+# Check mode (default): report issues, exit 1 if any found
 fix-databricks-magic path/to/notebook.py
+
+# Fix mode: rewrite files in place, exit 1 if any changed
+fix-databricks-magic --fix path/to/notebook.py
 ```
 
-### Standalone
+### Check mode output
 
-```bash
-python -m databricks_notebook_linter.fix_magic path/to/notebook.py
+```
+notebook.py:5: bare magic command '%pip install foo' needs '# MAGIC' prefix
+notebook.py:10: line in block containing magic needs '# MAGIC' prefix
 ```
 
 ## How it works
 
 1. Checks if the file starts with `# Databricks notebook source` -- skips non-notebook files
-2. Scans for lines starting with magic prefixes (`%pip`, `!`, etc.)
-3. Prefixes those lines with `# MAGIC `
-4. For indented magic commands, also prefixes the enclosing block statement (`if`, `for`, etc.)
-5. Follows backslash continuations to prefix all continuation lines
-
-The hook returns exit code 1 when it modifies files (standard pre-commit behavior to signal changes), and 0 when no changes are needed.
+2. Splits the file into cells on `# COMMAND ----------` boundaries
+3. For each cell, scans for bare magic lines (lines starting with `%pip`, `!`, etc.)
+4. If magic is at the top level, marks just that line (and any continuation lines)
+5. If magic is indented inside a block, walks backwards to find the top-level enclosing block and forwards to find the end of compound blocks (`else`, `except`, `finally`), then marks every line in the block
+6. Prefixes all marked lines with `# MAGIC`, preserving relative indentation for block-internal lines
 
 ## Development
 
 ```bash
-uv sync
-uv run pytest
+make setup    # install dependencies
+make test     # run tests
+make lint     # run ruff
+make format   # auto-format
 ```
 
 ## License
