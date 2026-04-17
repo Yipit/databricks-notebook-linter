@@ -208,6 +208,16 @@ make push-release VERSION=x.y.z   # build, publish to PyPI, push commit + tag
 
 `tag-release` validates a clean working tree on `main`, runs tests and lint, bumps the version in `pyproject.toml` and `README.md`, commits, and creates an annotated tag. `push-release` builds, publishes to PyPI, then pushes. Nothing reaches the remote until the PyPI publish succeeds.
 
+## Contributing
+
+PRs are welcome. Run `make test` and `make lint` before submitting.
+
 ## License
 
 MIT
+
+---
+
+**NOTE:** This codebase dictated but not read.*
+
+\* Claude wrote most of this at my prompting. I have reviewed the logic and tests, but I am still responsible for errors in the codebase, notwithstanding the original meaning of the introductory phrase.
