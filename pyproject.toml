@@ -1,6 +1,6 @@
 [project]
 name = "databricks-notebook-linter"
-version = "0.2.0"
+version = "0.2.1"
 description = "Pre-commit hook to fix bare magic commands in Databricks .py-format notebooks"
 readme = "README.md"
 license = "MIT"
