@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+### Fixed
+
+- `!=` operator at the start of a line (from black/ruff-formatted expressions) was misidentified as a shell bang (`!`) magic command, causing entire enclosing blocks and function bodies to be incorrectly prefixed with `# MAGIC`
+
 ## 0.2.0
 
 ### Added
