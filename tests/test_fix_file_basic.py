@@ -351,3 +351,61 @@ def test_fix_file_when_empty_notebook_returns_false(notebook):
     """)
 
     assert fix_file(filepath) is False
+
+
+def test_fix_file_when_not_equal_operator_at_line_start_not_treated_as_magic(notebook):
+    """!= at the start of a line (from black-formatted expressions) is not a shell bang."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        result = (
+            some_value
+            != other_value
+        )
+    """)
+
+    assert fix_file(filepath) is False
+    content = notebook.read()
+    assert "# MAGIC" not in content
+
+
+def test_fix_file_when_not_equal_inside_function_body_not_treated_as_magic(notebook):
+    """!= inside a function should not cause the entire function to be magic-prefixed."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        def check_values(df):
+            df_wrong = df.filter(
+                (F.col("gold_name").isNotNull())
+                & (F.col("gold_name")
+                    != F.col("pred_name"))
+            )
+            return df_wrong
+    """)
+
+    assert fix_file(filepath) is False
+    content = notebook.read()
+    assert "# MAGIC" not in content
+
+
+def test_fix_file_when_not_equal_in_chained_pyspark_not_treated_as_magic(notebook):
+    """!= on its own line in a chained PySpark expression is not a shell bang."""
+    filepath = notebook.write("""\
+        # Databricks notebook source
+
+        # COMMAND ----------
+
+        df_filtered = df.filter(
+            (F.col("a").isNotNull())
+            & (F.col("a")
+                != F.col("b"))
+        )
+    """)
+
+    assert fix_file(filepath) is False
+    content = notebook.read()
+    assert "# MAGIC" not in content

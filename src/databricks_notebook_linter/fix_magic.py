@@ -43,6 +43,8 @@ COMPOUND_CONTINUATIONS = ("elif ", "else:", "except:", "except ", "finally:")
 
 
 def is_magic_line(stripped: str) -> bool:
+    if stripped.startswith("!"):
+        return not stripped.startswith("!=")
     return any(stripped.startswith(p) for p in MAGIC_PREFIXES) or any(
         c in stripped for c in MAGIC_CONTAINS
     )
