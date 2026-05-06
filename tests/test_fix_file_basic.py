@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from databricks_notebook_linter.fix_magic import fix_file
 
+DNL001_ONLY = {"DNL001"}
+
 
 def test_fix_file_when_not_databricks_notebook_returns_false(notebook):
     filepath = notebook.write("""\
         import math
         %pip install foo
     """)
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
 
 
 def test_fix_file_when_bare_pip_prepends_magic(notebook):
@@ -20,7 +22,7 @@ def test_fix_file_when_bare_pip_prepends_magic(notebook):
         %pip install some-package==1.0.4
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC %pip install some-package==1.0.4" in content
     assert "\n%pip" not in content
@@ -35,7 +37,7 @@ def test_fix_file_when_already_has_magic_returns_false(notebook):
         # MAGIC %pip install some-package==1.0.4
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
 
 
 def test_fix_file_when_shell_bang_prepends_magic(notebook):
@@ -47,7 +49,7 @@ def test_fix_file_when_shell_bang_prepends_magic(notebook):
         !nvidia-smi
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC !nvidia-smi" in content
     assert "\n!nvidia-smi" not in content
@@ -65,7 +67,7 @@ def test_fix_file_when_multiline_pip_prepends_magic_on_all_lines(notebook):
           peft==0.18.1
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC %pip install -U \\\n" in content
     assert "# MAGIC transformers==4.57.6 \\\n" in content
@@ -83,7 +85,7 @@ def test_fix_file_when_conditional_pip_prefixes_both_if_and_pip(notebook):
             %pip install -U hf_transfer
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC if COMPUTE_ENV == "serverless":\n' in content
     assert "# MAGIC     %pip install -U hf_transfer" in content
@@ -99,7 +101,7 @@ def test_fix_file_when_mixed_cell_with_python_and_pip(notebook):
         %pip install some-package==1.0.4 --index-url $INDEX_URL
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert 'INDEX_URL = dbutils.secrets.get("pip", "index_url")' in content
     assert "# MAGIC %pip install some-package==1.0.4 --index-url $INDEX_URL" in content
@@ -119,7 +121,7 @@ def test_fix_file_when_multiple_magic_commands_fixes_all(notebook):
             %pip install bar
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC !nvidia-smi" in content
     assert "# MAGIC %pip install -U foo" in content
@@ -136,8 +138,8 @@ def test_fix_file_is_idempotent(notebook):
         %pip install foo
     """)
 
-    assert fix_file(filepath) is True
-    assert fix_file(filepath) is False
+    assert fix_file(filepath, DNL001_ONLY)
+    assert not fix_file(filepath, DNL001_ONLY)
 
 
 def test_fix_file_preserves_non_magic_lines(notebook):
@@ -151,7 +153,7 @@ def test_fix_file_preserves_non_magic_lines(notebook):
         print("hello")
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
 
 
 def test_fix_file_when_multiline_continuation_last_line_no_backslash(notebook):
@@ -165,7 +167,7 @@ def test_fix_file_when_multiline_continuation_last_line_no_backslash(notebook):
           bar
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC %pip install -U \\\n" in content
     assert "# MAGIC foo \\\n" in content
@@ -184,7 +186,7 @@ def test_fix_file_when_python_equality_not_treated_as_magic(notebook):
             print("correct")
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC" not in content
 
@@ -200,7 +202,7 @@ def test_fix_file_when_python_string_contains_percent_not_treated_as_magic(noteb
         print(msg)
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC" not in content
 
@@ -216,7 +218,7 @@ def test_fix_file_when_python_modulo_operator_not_treated_as_magic(notebook):
         print(f"{result}%")
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC" not in content
 
@@ -232,7 +234,7 @@ def test_fix_file_when_comment_contains_magic_prefix_not_treated_as_magic(notebo
         import math
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC" not in content
 
@@ -248,7 +250,7 @@ def test_fix_file_when_python_if_without_magic_body_not_treated_as_magic(noteboo
             print("hello")
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC" not in content
 
@@ -266,7 +268,7 @@ def test_fix_file_when_mixed_cell_preserves_regular_python_exactly(notebook):
         result = 1 + 2
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "import os\n" in content
     assert 'env = os.getenv("ENV", "prod")\n' in content
@@ -287,7 +289,7 @@ def test_fix_file_when_sql_magic_prepends_magic(notebook):
         %sql SELECT * FROM my_table
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC %sql SELECT * FROM my_table" in content
 
@@ -301,7 +303,7 @@ def test_fix_file_when_md_magic_prepends_magic(notebook):
         %md # My Notebook Title
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC %md # My Notebook Title" in content
 
@@ -315,7 +317,7 @@ def test_fix_file_when_bare_restart_python_prepends_magic(notebook):
         dbutils.library.restartPython()
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC dbutils.library.restartPython()" in content
 
@@ -329,7 +331,7 @@ def test_fix_file_when_restart_python_already_has_magic_returns_false(notebook):
         # MAGIC dbutils.library.restartPython()
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
 
 
 def test_fix_file_when_restart_python_is_idempotent(notebook):
@@ -341,8 +343,8 @@ def test_fix_file_when_restart_python_is_idempotent(notebook):
         dbutils.library.restartPython()
     """)
 
-    assert fix_file(filepath) is True
-    assert fix_file(filepath) is False
+    assert fix_file(filepath, DNL001_ONLY)
+    assert not fix_file(filepath, DNL001_ONLY)
 
 
 def test_fix_file_when_empty_notebook_returns_false(notebook):
@@ -350,7 +352,7 @@ def test_fix_file_when_empty_notebook_returns_false(notebook):
         # Databricks notebook source
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
 
 
 def test_fix_file_when_not_equal_operator_at_line_start_not_treated_as_magic(notebook):
@@ -366,7 +368,7 @@ def test_fix_file_when_not_equal_operator_at_line_start_not_treated_as_magic(not
         )
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC" not in content
 
@@ -387,7 +389,7 @@ def test_fix_file_when_not_equal_inside_function_body_not_treated_as_magic(noteb
             return df_wrong
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC" not in content
 
@@ -406,6 +408,6 @@ def test_fix_file_when_not_equal_in_chained_pyspark_not_treated_as_magic(noteboo
         )
     """)
 
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC" not in content

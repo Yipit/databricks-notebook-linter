@@ -1,14 +1,25 @@
 # databricks-notebook-linter
 
-A pre-commit hook that fixes bare magic commands in Databricks `.py`-format notebooks.
+A pre-commit hook that lints and fixes Databricks `.py`-format notebooks.
 
 ## Problem
 
-Databricks exports notebooks as `.py` files with special comment markers. Magic commands like `%pip install` and `!nvidia-smi` appear as bare lines, which are invalid Python syntax. This breaks linters (ruff, flake8) and type checkers (ty, mypy) that try to parse these files.
+Databricks exports notebooks as `.py` files with special comment markers. Magic commands like `%pip install` and `!nvidia-smi` appear as bare lines, which are invalid Python syntax. This breaks linters (ruff, flake8) and type checkers (ty, mypy) that try to parse these files. Notebooks also accumulate empty cells and formatting inconsistencies over time.
 
-## Solution
+## Rules
 
-This tool prefixes bare magic commands with `# MAGIC`, converting them to Python comments that Databricks still recognizes and executes:
+| Code | Name | Description | Default |
+|------|------|-------------|---------|
+| DNL001 | `magic-prefix` | Prefix bare magic commands with `# MAGIC` | Enabled |
+| DNL002 | `leading-blank-lines` | Strip leading blank lines from Python cells | Enabled |
+| DNL003 | `trailing-empty-cells` | Remove trailing empty cells at end of notebook | Enabled |
+| DNL004 | `empty-cells` | Remove empty cells with no content | Enabled |
+
+All rules are enabled by default. Use `--select` and `--ignore` to control which rules run.
+
+### DNL001: magic-prefix
+
+Prefixes bare magic commands with `# MAGIC`, converting them to Python comments that Databricks still recognizes and executes:
 
 ```python
 # Before
@@ -18,7 +29,7 @@ This tool prefixes bare magic commands with `# MAGIC`, converting them to Python
 # MAGIC %pip install some-package==1.0.4
 ```
 
-It handles:
+Handles:
 
 - Single-line magic commands (`%pip`, `%sql`, `%md`, `%sh`, `%fs`, `%run`, `%python`, `%r`, `%scala`)
 - Shell bang commands (`!nvidia-smi`)
@@ -29,7 +40,31 @@ It handles:
 - Compound blocks -- `if/elif/else`, `try/except/finally` treated as single units
 - Mixed cells -- regular Python lines outside blocks are left untouched
 
-The tool is idempotent -- running it twice produces the same result.
+### DNL002: leading-blank-lines
+
+Strips all leading blank lines from Python cells. This removes the conventional blank line that Databricks inserts after `# COMMAND ----------` separators.
+
+Scope: Python cells only. Cells containing `# MAGIC %md`, `# MAGIC %sql`, and other magic language cells are skipped (they may have intentional formatting).
+
+This rule is compatible with ruff -- ruff's E302/E303 rules are fine with zero blank lines between a comment and a definition, it's the single blank line case that triggers a violation. By stripping all leading blanks, DNL002 avoids the ruff conflict rather than causing one.
+
+### DNL003: trailing-empty-cells
+
+Removes empty cells (and their preceding `# COMMAND ----------` separators) from the end of the notebook.
+
+### DNL004: empty-cells
+
+Removes empty cells with no content anywhere in the notebook (and their preceding separators). The header cell is never removed.
+
+### Pipeline order
+
+When multiple rules are active, they run in this order: DNL002 -> DNL004 -> DNL003 -> DNL001. This matters because:
+
+- DNL002 can turn a cell with only blank lines into an empty cell, which DNL004 then removes
+- DNL004 removes interior empty cells before DNL003 checks trailing cells
+- DNL001 runs last so it operates on the final cell structure
+
+All rules are idempotent -- running the tool twice produces the same result.
 
 ## Usage
 
@@ -40,7 +75,7 @@ Add to your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Yipit/databricks-notebook-linter
-    rev: v0.2.1
+    rev: v0.3.0
     hooks:
       - id: fix-databricks-magic
         args: [--fix]
@@ -53,6 +88,19 @@ hooks:
   - id: fix-databricks-magic
 ```
 
+#### Selecting rules
+
+```yaml
+hooks:
+  # Only magic prefix and leading blank lines
+  - id: fix-databricks-magic
+    args: [--fix, --select, "DNL001,DNL002"]
+
+  # All rules except empty cell removal
+  - id: fix-databricks-magic
+    args: [--fix, --ignore, "DNL004"]
+```
+
 ### As a CLI tool
 
 ```bash
@@ -63,29 +111,35 @@ fix-databricks-magic path/to/notebook.py
 
 # Fix mode: rewrite files in place, exit 1 if any changed
 fix-databricks-magic --fix path/to/notebook.py
+
+# Select specific rules
+fix-databricks-magic --fix --select DNL001,DNL002 path/to/notebook.py
+
+# Ignore specific rules
+fix-databricks-magic --fix --ignore DNL003,DNL004 path/to/notebook.py
+
+# List available rules
+fix-databricks-magic --list-rules
 ```
 
 ### Check mode output
 
 ```
-notebook.py:5: bare magic command '%pip install foo' needs '# MAGIC' prefix
-notebook.py:10: line in block containing magic needs '# MAGIC' prefix
+notebook.py:5: [DNL001] bare magic command '%pip install foo' needs '# MAGIC' prefix
+notebook.py:10: [DNL001] line in block containing magic needs '# MAGIC' prefix
+notebook.py:3: [DNL002] leading blank line in Python cell
+notebook.py:15: [DNL004] empty cell
 ```
 
-## How it works
+### Fix mode output
 
-1. Checks if the file starts with `# Databricks notebook source` -- skips non-notebook files
-2. Splits the file into cells on `# COMMAND ----------` boundaries
-3. For each cell, scans for bare magic lines (lines starting with `%pip`, `!`, etc.)
-4. If magic is at the top level, marks just that line (and any continuation lines)
-5. If magic is indented inside a block, walks backwards to find the top-level enclosing block and forwards to find the end of compound blocks (`else`, `except`, `finally`), then marks every line in the block
-6. Prefixes all marked lines with `# MAGIC`, preserving relative indentation for block-internal lines
+```
+Fixed [DNL001, DNL002]: notebook.py
+```
 
 ## Examples
 
 ### Bare magic commands
-
-The simplest case -- a magic command on its own line gets prefixed:
 
 ```python
 # Before                              # After
@@ -96,8 +150,6 @@ dbutils.library.restartPython()       # MAGIC dbutils.library.restartPython()
 ```
 
 ### Multiline continuations
-
-When a `%pip install` spans multiple lines with `\`, all continuation lines are prefixed:
 
 ```python
 # Before
@@ -115,8 +167,6 @@ When a `%pip install` spans multiple lines with `\`, all continuation lines are 
 
 ### Conditional installs
 
-When a magic command is inside a block, the entire block is prefixed -- the `if` statement itself and all lines inside it. This is necessary because Databricks needs the whole block to be in magic context:
-
 ```python
 # Before
 if COMPUTE_ENV == "serverless":
@@ -128,8 +178,6 @@ if COMPUTE_ENV == "serverless":
 ```
 
 ### Compound blocks (if/else, try/except)
-
-The tool treats `if/elif/else` and `try/except/finally` as single units. If magic appears in any branch, the entire compound block is prefixed:
 
 ```python
 # Before
@@ -145,46 +193,30 @@ except:
 # MAGIC     %pip install bitsandbytes
 ```
 
-This also works when magic only appears in a secondary branch like `else` or `except` -- the entire block from the opening `if` or `try` is prefixed.
-
-### Mixed cells
-
-When a cell contains both regular Python and magic commands, only the magic lines (and their enclosing blocks) are prefixed. Regular Python is left untouched:
+### Leading blank lines (DNL002)
 
 ```python
-# Before
-INDEX_URL = dbutils.secrets.get("pip", "index_url")
-%pip install some-package --index-url $INDEX_URL
-result = process_data()
-
-# After
-INDEX_URL = dbutils.secrets.get("pip", "index_url")
-# MAGIC %pip install some-package --index-url $INDEX_URL
-result = process_data()
+# Before                              # After
+# COMMAND ----------                  # COMMAND ----------
+                                      import math
+import math
 ```
 
-### What is NOT treated as magic
-
-The tool avoids false positives. These patterns are left alone:
+### Empty cells (DNL004) and trailing empty cells (DNL003)
 
 ```python
-# Not touched -- % inside a string
-msg = "%pip is a magic command"
+# Before                              # After
+# COMMAND ----------                  # COMMAND ----------
+import math                           import math
+                                      # COMMAND ----------
+# COMMAND ----------                  x = 1
+                                      
+# COMMAND ----------
+x = 1
 
-# Not touched -- modulo operator
-result = 10 % 3
+# COMMAND ----------
 
-# Not touched -- % in a comment
-# Use %pip to install packages
-
-# Not touched -- if block without any magic in its body
-if version == "1.0":
-    print("correct")
 ```
-
-### Non-notebook files
-
-Files that don't start with `# Databricks notebook source` are skipped entirely, and non-`.py` files are ignored by the CLI and pre-commit hook.
 
 ## Development
 

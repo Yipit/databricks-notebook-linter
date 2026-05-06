@@ -1,8 +1,9 @@
 - id: fix-databricks-magic
-  name: Fix bare magic commands in Databricks notebooks
+  name: Lint and fix Databricks notebooks
   entry: fix-databricks-magic
   language: python
   types: [python]
   description: >
-    Reports bare magic commands (%pip, !, etc.) that need # MAGIC prefix
-    in Databricks .py-format notebooks. Pass --fix to rewrite files.
+    Lints Databricks .py-format notebooks: prefixes bare magic commands with
+    # MAGIC, strips leading blank lines, removes empty cells. Pass --fix to
+    rewrite files. Use --select/--ignore to control which rules run.
