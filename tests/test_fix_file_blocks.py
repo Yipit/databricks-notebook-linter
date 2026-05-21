@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from databricks_notebook_linter.fix_magic import fix_file
 
+DNL001_ONLY = {"DNL001"}
+
 
 def test_fix_file_when_conditional_preserves_relative_indentation(notebook):
     """Magic lines inside a block must preserve indentation relative to the block."""
@@ -14,7 +16,7 @@ def test_fix_file_when_conditional_preserves_relative_indentation(notebook):
             %pip install -U hf_transfer
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     # The %pip must keep its indentation relative to the if
     assert '# MAGIC if COMPUTE_ENV == "serverless":\n' in content
@@ -34,7 +36,7 @@ def test_fix_file_when_block_has_python_between_starter_and_magic(notebook):
             %pip install -U hf_transfer
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     # The intermediate Python line must also be prefixed
     assert '# MAGIC if COMPUTE_ENV == "serverless":\n' in content
@@ -55,7 +57,7 @@ def test_fix_file_when_if_else_both_have_magic(notebook):
             %pip install foo
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC if ENV == "dev":\n' in content
     assert "# MAGIC     %pip install foo --index-url $DEV_INDEX\n" in content
@@ -75,7 +77,7 @@ def test_fix_file_when_nested_if_both_levels_prefixed(notebook):
                 %pip install -U hf_transfer
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC if USE_GPU:\n" in content
     assert '# MAGIC     if COMPUTE_ENV == "serverless":\n' in content
@@ -93,7 +95,7 @@ def test_fix_file_when_for_loop_contains_magic(notebook):
             %pip install {pkg}
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC for pkg in ["transformers", "datasets"]:\n' in content
     assert "# MAGIC     %pip install {pkg}\n" in content
@@ -112,7 +114,7 @@ def test_fix_file_when_try_except_contains_magic(notebook):
             %pip install fallback_pkg
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC try:\n" in content
     assert "# MAGIC     %pip install experimental_pkg\n" in content
@@ -133,9 +135,9 @@ def test_fix_file_is_idempotent_with_conditional_block(notebook):
             %pip install -U hf_transfer
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -151,9 +153,9 @@ def test_fix_file_is_idempotent_with_nested_blocks(notebook):
                 %pip install -U hf_transfer
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -170,9 +172,9 @@ def test_fix_file_is_idempotent_with_if_else(notebook):
             %pip install foo
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -188,9 +190,9 @@ def test_fix_file_is_idempotent_with_intermediate_python(notebook):
             %pip install -U hf_transfer
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -206,9 +208,9 @@ def test_fix_file_is_idempotent_with_multiline_continuation(notebook):
           datasets==4.5.0
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -225,9 +227,9 @@ def test_fix_file_is_idempotent_with_mixed_cell(notebook):
         result = 1 + 2
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -248,7 +250,7 @@ def test_fix_file_when_magic_only_in_else_prefixes_entire_if_else(notebook):
             %pip install debug-tools
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC if ENV == "prod":\n' in content
     assert '# MAGIC     print("production")\n' in content
@@ -268,12 +270,12 @@ def test_fix_file_when_magic_only_in_else_is_idempotent(notebook):
             %pip install debug-tools
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
     # Verify correctness (entire block prefixed, not just the else branch)
     assert '# MAGIC if ENV == "prod":\n' in first_pass
     assert "# MAGIC else:\n" in first_pass
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -293,7 +295,7 @@ def test_fix_file_when_magic_only_in_elif_prefixes_entire_chain(notebook):
             print("other")
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC if ENV == "prod":\n' in content
     assert '# MAGIC     print("production")\n' in content
@@ -317,12 +319,12 @@ def test_fix_file_when_magic_only_in_elif_is_idempotent(notebook):
             print("other")
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
     # Verify correctness (entire chain prefixed, not just elif onward)
     assert '# MAGIC if ENV == "prod":\n' in first_pass
     assert '# MAGIC elif ENV == "dev":\n' in first_pass
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -340,7 +342,7 @@ def test_fix_file_when_magic_only_in_except_prefixes_entire_try_except(notebook)
             %pip install pandas
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC try:\n" in content
     assert "# MAGIC     import pandas\n" in content
@@ -360,12 +362,12 @@ def test_fix_file_when_magic_only_in_except_is_idempotent(notebook):
             %pip install pandas
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
     # Verify correctness (entire try/except prefixed, not just except)
     assert "# MAGIC try:\n" in first_pass
     assert "# MAGIC except:\n" in first_pass
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -383,7 +385,7 @@ def test_fix_file_when_magic_only_in_finally_prefixes_entire_try_finally(noteboo
             %pip install pandas
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC try:\n" in content
     assert "# MAGIC     import pandas\n" in content
@@ -403,12 +405,12 @@ def test_fix_file_when_magic_only_in_finally_is_idempotent(notebook):
             %pip install pandas
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
     # Verify correctness (entire try/finally prefixed, not just finally)
     assert "# MAGIC try:\n" in first_pass
     assert "# MAGIC finally:\n" in first_pass
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -429,7 +431,7 @@ def test_fix_file_when_multiline_continuation_inside_block_preserves_indent(note
               datasets
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC if ENV == "serverless":\n' in content
     assert "# MAGIC     %pip install -U \\\n" in content
@@ -449,10 +451,10 @@ def test_fix_file_when_multiline_continuation_inside_block_is_idempotent(noteboo
               datasets
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
     assert '# MAGIC if ENV == "serverless":\n' in first_pass
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -472,7 +474,7 @@ def test_fix_file_when_block_has_blank_line_between_starter_and_magic(notebook):
             %pip install debug-tools
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC if ENV == "dev":\n' in content
     assert "# MAGIC     %pip install debug-tools\n" in content
@@ -493,7 +495,7 @@ def test_fix_file_when_with_statement_contains_magic(notebook):
             %pip install debug-tools
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC with open("/tmp/log") as f:\n' in content
     assert "# MAGIC     %pip install debug-tools\n" in content
@@ -512,7 +514,7 @@ def test_fix_file_when_triple_nested_blocks_all_prefixed(notebook):
                     %pip install {pkg}
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC if USE_GPU:\n" in content
     assert "# MAGIC     for pkg in PACKAGES:\n" in content
@@ -530,7 +532,7 @@ def test_fix_file_when_indented_magic_without_enclosing_block(notebook):
             %pip install foo
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC     %pip install foo" in content
 
@@ -549,7 +551,7 @@ def test_fix_file_when_blank_line_between_if_block_and_else(notebook):
             %pip install debug-tools
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC if ENV == "prod":\n' in content
     assert '# MAGIC     print("production")\n' in content
@@ -570,7 +572,7 @@ def test_fix_file_when_compound_continuation_at_cell_start(notebook):
         "    %pip install foo\n"
     )
 
-    assert fix_file(str(path)) is True
+    assert fix_file(str(path), DNL001_ONLY)
     content = path.read_text()
     assert "# MAGIC else:\n" in content
     assert "# MAGIC     %pip install foo\n" in content
@@ -588,7 +590,7 @@ def test_fix_file_when_python_follows_block_containing_magic(notebook):
         x = 1
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC if ENV == "dev":\n' in content
     assert "# MAGIC     %pip install foo\n" in content
@@ -607,7 +609,7 @@ def test_fix_file_when_consecutive_cell_separators(notebook):
         "%pip install foo\n"
     )
 
-    assert fix_file(str(path)) is True
+    assert fix_file(str(path), DNL001_ONLY)
     content = path.read_text()
     assert "# MAGIC %pip install foo\n" in content
 
@@ -625,7 +627,7 @@ def test_fix_file_when_notebook_ends_at_cell_separator(notebook):
         "# COMMAND ----------\n"
     )
 
-    assert fix_file(str(path)) is True
+    assert fix_file(str(path), DNL001_ONLY)
     content = path.read_text()
     assert "# MAGIC %pip install foo\n" in content
 
@@ -641,7 +643,7 @@ def test_fix_file_when_restart_python_in_conditional_prefixes_block(notebook):
             dbutils.library.restartPython()
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert '# MAGIC if COMPUTE_ENV == "serverless":\n' in content
     assert "# MAGIC     dbutils.library.restartPython()\n" in content
@@ -657,9 +659,9 @@ def test_fix_file_when_restart_python_in_conditional_is_idempotent(notebook):
             dbutils.library.restartPython()
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     first_pass = notebook.read()
-    assert fix_file(filepath) is False
+    assert not fix_file(filepath, DNL001_ONLY)
     second_pass = notebook.read()
     assert first_pass == second_pass
 
@@ -678,7 +680,7 @@ def test_fix_file_when_magic_in_separate_cells_both_fixed(notebook):
         %pip install bar
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     assert "# MAGIC %pip install foo\n" in content
     assert "# MAGIC %pip install bar\n" in content
@@ -699,7 +701,7 @@ def test_fix_file_when_cell_without_magic_not_touched(notebook):
         %pip install foo
     """)
 
-    assert fix_file(filepath) is True
+    assert fix_file(filepath, DNL001_ONLY)
     content = notebook.read()
     # Clean cell untouched
     assert "import math\n" in content

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import NamedTuple
 
 DATABRICKS_HEADER = "# Databricks notebook source"
 CELL_SEPARATOR = "# COMMAND ----------"
@@ -35,11 +36,69 @@ MAGIC_PREFIXES = (
     "!",
 )
 
-MAGIC_CONTAINS = (
-    "dbutils.library.restartPython()",
-)
+MAGIC_CONTAINS = ("dbutils.library.restartPython()",)
 
 COMPOUND_CONTINUATIONS = ("elif ", "else:", "except:", "except ", "finally:")
+
+
+class Cell(NamedTuple):
+    start: int
+    lines: list[str]
+    is_separator: bool
+
+
+class Rule(NamedTuple):
+    code: str
+    name: str
+    description: str
+
+
+class Diagnostic(NamedTuple):
+    filepath: str
+    line: int
+    code: str
+    message: str
+
+    def __str__(self) -> str:
+        return f"{self.filepath}:{self.line}: [{self.code}] {self.message}"
+
+
+ALL_RULES = [
+    Rule("DNL001", "magic-prefix", "Prefix bare magic commands with # MAGIC"),
+    Rule(
+        "DNL002", "leading-blank-lines", "Strip leading blank lines from Python cells"
+    ),
+    Rule(
+        "DNL003",
+        "trailing-empty-cells",
+        "Remove trailing empty cells at end of notebook",
+    ),
+    Rule("DNL004", "empty-cells", "Remove empty cells with no content"),
+]
+ALL_RULE_CODES = {r.code for r in ALL_RULES}
+
+
+def resolve_rules(
+    select: list[str] | None = None,
+    ignore: list[str] | None = None,
+) -> set[str]:
+    unknown = set()
+    if select:
+        unknown |= set(select) - ALL_RULE_CODES
+    if ignore:
+        unknown |= set(ignore) - ALL_RULE_CODES
+    if unknown:
+        raise ValueError(f"Unknown rule codes: {', '.join(sorted(unknown))}")
+
+    if select:
+        active = set(select)
+    else:
+        active = set(ALL_RULE_CODES)
+
+    if ignore:
+        active -= set(ignore)
+
+    return active
 
 
 def is_magic_line(stripped: str) -> bool:
@@ -160,18 +219,18 @@ def _find_lines_needing_magic(
     return needs_magic, block_lines
 
 
-def _split_into_cells(lines: list[str]) -> list[tuple[int, list[str]]]:
+def _split_into_cells(lines: list[str]) -> list[Cell]:
     """Split notebook lines into cells on ``# COMMAND ----------`` boundaries."""
-    cells: list[tuple[int, list[str]]] = []
+    cells: list[Cell] = []
     current_start = 0
     current: list[str] = []
 
     for i, line in enumerate(lines):
         if CELL_SEPARATOR in line:
             if current:
-                cells.append((current_start, current))
+                cells.append(Cell(current_start, current, is_separator=False))
                 current = []
-            cells.append((i, [line]))
+            cells.append(Cell(i, [line], is_separator=True))
             current_start = i + 1
         else:
             if not current:
@@ -179,19 +238,128 @@ def _split_into_cells(lines: list[str]) -> list[tuple[int, list[str]]]:
             current.append(line)
 
     if current:
-        cells.append((current_start, current))
+        cells.append(Cell(current_start, current, is_separator=False))
 
     return cells
 
 
-def _analyze_file(
-    filepath: str,
-) -> tuple[str, list[str], set[int], set[int]] | None:
-    """Read and analyze a file for bare magic commands.
+def is_python_cell(cell: Cell) -> bool:
+    if cell.is_separator:
+        return False
+    for line in cell.lines:
+        stripped = line.strip()
+        if stripped:
+            return not stripped.startswith("# MAGIC %")
+    return False
 
-    Returns ``(original, lines, needs_magic, block_lines)`` or ``None`` if the
-    file is not a Databricks notebook.
-    """
+
+def is_empty_cell(cell: Cell) -> bool:
+    if cell.is_separator:
+        return False
+    return all(line.strip() == "" for line in cell.lines)
+
+
+def _check_leading_blank_lines(
+    cells: list[Cell],
+    filepath: str,
+) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for cell in cells:
+        if not is_python_cell(cell):
+            continue
+        if cell.lines and cell.lines[0].strip() == "":
+            diagnostics.append(
+                Diagnostic(
+                    filepath,
+                    cell.start + 1,
+                    "DNL002",
+                    "leading blank line in Python cell",
+                ),
+            )
+    return diagnostics
+
+
+def _fix_leading_blank_lines(cells: list[Cell]) -> tuple[list[Cell], bool]:
+    changed = False
+    new_cells: list[Cell] = []
+    for cell in cells:
+        if not is_python_cell(cell):
+            new_cells.append(cell)
+            continue
+        first_non_blank = next(
+            (i for i, line in enumerate(cell.lines) if line.strip() != ""),
+            0,
+        )
+        if first_non_blank > 0:
+            changed = True
+            new_cells.append(
+                Cell(
+                    cell.start + first_non_blank,
+                    cell.lines[first_non_blank:],
+                    cell.is_separator,
+                ),
+            )
+        else:
+            new_cells.append(cell)
+    return new_cells, changed
+
+
+def _check_empty_cells(cells: list[Cell], filepath: str) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for i, cell in enumerate(cells):
+        if i == 0:
+            continue
+        if is_empty_cell(cell):
+            diagnostics.append(
+                Diagnostic(filepath, cell.start + 1, "DNL004", "empty cell"),
+            )
+    return diagnostics
+
+
+def _fix_empty_cells(cells: list[Cell]) -> tuple[list[Cell], bool]:
+    changed = False
+    new_cells: list[Cell] = []
+    i = 0
+    while i < len(cells):
+        cell = cells[i]
+        if i > 0 and is_empty_cell(cell):
+            changed = True
+            if new_cells and new_cells[-1].is_separator:  # pragma: no branch
+                new_cells.pop()
+            i += 1
+            continue
+        new_cells.append(cell)
+        i += 1
+    return new_cells, changed
+
+
+def _check_trailing_empty_cells(cells: list[Cell], filepath: str) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    i = len(cells) - 1
+    while i > 0:
+        cell = cells[i]
+        if is_empty_cell(cell):
+            diagnostics.append(
+                Diagnostic(filepath, cell.start + 1, "DNL003", "trailing empty cell"),
+            )
+            i -= 1
+            if i > 0 and cells[i].is_separator:  # pragma: no branch
+                i -= 1
+        else:
+            break
+    return diagnostics
+
+
+def _fix_trailing_empty_cells(cells: list[Cell]) -> tuple[list[Cell], bool]:
+    original_len = len(cells)
+    while len(cells) > 1 and is_empty_cell(cells[-1]):
+        cells = cells[:-1]
+        if cells and cells[-1].is_separator:  # pragma: no branch
+            cells = cells[:-1]
+    return cells, len(cells) != original_len
+
+
+def _read_notebook(filepath: str) -> tuple[str, list[Cell]] | None:
     with open(filepath) as f:
         original = f.read()
 
@@ -200,76 +368,131 @@ def _analyze_file(
     if not lines or DATABRICKS_HEADER not in lines[0]:
         return None
 
-    global_needs_magic: set[int] = set()
-    global_block_lines: set[int] = set()
-
-    for cell_start, cell_lines in _split_into_cells(lines):
-        needs_magic, block_lines = _find_lines_needing_magic(cell_lines)
-        for local_idx in needs_magic:
-            global_needs_magic.add(cell_start + local_idx)
-        for local_idx in block_lines:
-            global_block_lines.add(cell_start + local_idx)
-
-    return original, lines, global_needs_magic, global_block_lines
+    return original, _split_into_cells(lines)
 
 
-def check_file(filepath: str) -> list[str]:
-    """Return diagnostic strings for bare magic commands in *filepath*."""
-    result = _analyze_file(filepath)
-    if result is None:
-        return []
-
-    _original, lines, global_needs_magic, _global_block_lines = result
-    if not global_needs_magic:
-        return []
-
-    diagnostics = []
-    for i in sorted(global_needs_magic):
-        stripped = lines[i].strip()
-        if is_magic_line(stripped):
+def _check_magic_prefixes(cells: list[Cell], filepath: str) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for cell in cells:
+        if cell.is_separator:
+            continue
+        needs_magic, _block_lines = _find_lines_needing_magic(cell.lines)
+        for local_idx in sorted(needs_magic):
+            stripped = cell.lines[local_idx].strip()
+            if is_magic_line(stripped):
+                msg = f"bare magic command '{stripped}' needs '# MAGIC' prefix"
+            else:
+                msg = "line in block containing magic needs '# MAGIC' prefix"
             diagnostics.append(
-                f"{filepath}:{i + 1}: bare magic command '{stripped}' needs '# MAGIC' prefix"
+                Diagnostic(filepath, cell.start + local_idx + 1, "DNL001", msg)
             )
-        else:
-            diagnostics.append(
-                f"{filepath}:{i + 1}: line in block containing magic needs '# MAGIC' prefix"
-            )
-
     return diagnostics
 
 
-def fix_file(filepath: str) -> bool:
-    result = _analyze_file(filepath)
-    if result is None:
-        return False
-
-    original, lines, global_needs_magic, global_block_lines = result
-    if not global_needs_magic:
-        return False
-
-    new_lines = []
-    for i, line in enumerate(lines):
-        if i in global_needs_magic and not is_already_magic(line):
-            if i in global_block_lines:
-                new_lines.append("# MAGIC " + line)
+def _fix_magic_prefixes(cells: list[Cell]) -> tuple[list[Cell], bool]:
+    changed = False
+    new_cells: list[Cell] = []
+    for cell in cells:
+        if cell.is_separator:
+            new_cells.append(cell)
+            continue
+        needs_magic, block_lines = _find_lines_needing_magic(cell.lines)
+        if not needs_magic:
+            new_cells.append(cell)
+            continue
+        changed = True
+        new_lines = []
+        for i, line in enumerate(cell.lines):
+            if i in needs_magic and not is_already_magic(line):
+                if i in block_lines:
+                    new_lines.append("# MAGIC " + line)
+                else:
+                    new_lines.append("# MAGIC " + line.lstrip())
             else:
-                new_lines.append("# MAGIC " + line.lstrip())
-        else:
-            new_lines.append(line)
+                new_lines.append(line)
+        new_cells.append(Cell(cell.start, new_lines, cell.is_separator))
+    return new_cells, changed
 
-    new_content = "".join(new_lines)
-    if new_content == original:  # pragma: no cover - defensive; analysis filters already-magic lines
-        return False
+
+def _cells_to_text(cells: list[Cell]) -> str:
+    return "".join(line for cell in cells for line in cell.lines)
+
+
+def check_file(
+    filepath: str,
+    active_rules: set[str] | None = None,
+) -> list[Diagnostic]:
+    result = _read_notebook(filepath)
+    if result is None:
+        return []
+
+    _original, cells = result
+    if active_rules is None:
+        active_rules = ALL_RULE_CODES
+
+    diagnostics: list[Diagnostic] = []
+    if "DNL002" in active_rules:
+        diagnostics.extend(_check_leading_blank_lines(cells, filepath))
+    if "DNL004" in active_rules:
+        diagnostics.extend(_check_empty_cells(cells, filepath))
+    if "DNL003" in active_rules:
+        diagnostics.extend(_check_trailing_empty_cells(cells, filepath))
+    if "DNL001" in active_rules:
+        diagnostics.extend(_check_magic_prefixes(cells, filepath))
+    return diagnostics
+
+
+def fix_file(
+    filepath: str,
+    active_rules: set[str] | None = None,
+) -> set[str]:
+    result = _read_notebook(filepath)
+    if result is None:
+        return set()
+
+    original, cells = result
+    if active_rules is None:
+        active_rules = ALL_RULE_CODES
+
+    applied: set[str] = set()
+
+    # Pipeline order: DNL002 -> DNL004 -> DNL003 -> DNL001
+    if "DNL002" in active_rules:
+        cells, changed = _fix_leading_blank_lines(cells)
+        if changed:
+            applied.add("DNL002")
+
+    if "DNL004" in active_rules:
+        cells, changed = _fix_empty_cells(cells)
+        if changed:
+            applied.add("DNL004")
+
+    if "DNL003" in active_rules:
+        cells, changed = _fix_trailing_empty_cells(cells)
+        if changed:
+            applied.add("DNL003")
+
+    if "DNL001" in active_rules:
+        cells, changed = _fix_magic_prefixes(cells)
+        if changed:
+            applied.add("DNL001")
+
+    if not applied:
+        return set()
+
+    new_content = _cells_to_text(cells)
+    if new_content == original:  # pragma: no cover
+        return set()
 
     with open(filepath, "w") as f:
         f.write(new_content)
 
-    return True
+    return applied
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Fix bare magic commands in Databricks .py-format notebooks",
+        description="Lint and fix Databricks .py-format notebooks",
     )
     parser.add_argument("files", nargs="*", help="Files to check")
     parser.add_argument(
@@ -277,25 +500,58 @@ def main() -> int:
         action="store_true",
         help="Fix files in place (default: check only)",
     )
+    parser.add_argument(
+        "--select",
+        type=str,
+        default=None,
+        help="Comma-separated rule codes to enable (e.g. DNL001,DNL002)",
+    )
+    parser.add_argument(
+        "--ignore",
+        type=str,
+        default=None,
+        help="Comma-separated rule codes to disable (e.g. DNL003,DNL004)",
+    )
+    parser.add_argument(
+        "--list-rules",
+        action="store_true",
+        help="Print available rules and exit",
+    )
     args = parser.parse_args()
 
+    if args.list_rules:
+        for rule in ALL_RULES:
+            print(f"{rule.code}  {rule.name:24s}  {rule.description}")
+        return 0
+
+    select = args.select.split(",") if args.select else None
+    ignore = args.ignore.split(",") if args.ignore else None
+    try:
+        active_rules = resolve_rules(select, ignore)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+
     if args.fix:
-        changed_files = []
+        changed_files: list[tuple[str, set[str]]] = []
         for filepath in args.files:
-            if filepath.endswith(".py") and fix_file(filepath):
-                changed_files.append(filepath)
+            if filepath.endswith(".py"):
+                applied = fix_file(filepath, active_rules)
+                if applied:
+                    changed_files.append((filepath, applied))
 
         if changed_files:
-            for f in changed_files:
-                print(f"Fixed magic commands in: {f}")
+            for f, rules in changed_files:
+                codes = ", ".join(sorted(rules))
+                print(f"Fixed [{codes}]: {f}")
             return 1
 
         return 0
 
-    all_diagnostics: list[str] = []
+    all_diagnostics: list[Diagnostic] = []
     for filepath in args.files:
         if filepath.endswith(".py"):
-            all_diagnostics.extend(check_file(filepath))
+            all_diagnostics.extend(check_file(filepath, active_rules))
 
     if all_diagnostics:
         for d in all_diagnostics:
