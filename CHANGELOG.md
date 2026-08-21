@@ -9,7 +9,7 @@
 - `per-path` config entries, scoping rules to files matching a list of regexes via `select`, `extend-select`, and `ignore`. This is how a rule such as `DNL005` is enabled for one folder without enabling it repository-wide
 - `--config PATH` to read a specific config file, and `--no-config` to ignore configuration
 - Rules can now be off by default (`Rule.default`). `--list-rules` shows each rule's default state
-- `CHECK_RULES` and `FIX_RULES` registries map rule codes to their implementations. Iteration order is execution order, a rule absent from `FIX_RULES` is check-only, and `check_file()`/`fix_file()` dispatch through them instead of a chain of per-rule `if` blocks
+- `ALL_RULES` is now the single declaration of a rule, carrying its metadata alongside its `check` and `fix` functions. `check_file()` and `fix_file()` both iterate it, list order is execution order, and a rule declaring no `fix` is check-only. `ALL_RULE_CODES`, `DEFAULT_RULE_CODES`, and `FIXABLE_RULE_CODES` all derive from it
 
 ### Changed
 

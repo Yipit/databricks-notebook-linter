@@ -5,9 +5,7 @@ import pytest
 from databricks_notebook_linter.fix_magic import (
     ALL_RULE_CODES,
     ALL_RULES,
-    CHECK_RULES,
     DEFAULT_RULE_CODES,
-    FIX_RULES,
     FIXABLE_RULE_CODES,
     Diagnostic,
     resolve_rules,
@@ -67,29 +65,40 @@ def test_diagnostic_str_format():
     assert str(d) == "notebook.py:5: [DNL001] bare magic command"
 
 
-# --- registry invariants -------------------------------------------------
+# --- catalog invariants --------------------------------------------------
 #
-# CHECK_RULES and FIX_RULES are what check_file()/fix_file() iterate, so a rule
-# added to ALL_RULES but not registered would silently never run.
+# ALL_RULES is the single declaration of every rule: check_file() and fix_file()
+# both iterate it, and the code sets derive from it. A rule cannot be declared
+# without a check function -- Rule.check is a required field -- so what is left
+# to pin is that nothing passes a null one, and that the order stays right.
 
 
-def test_every_rule_has_a_check_function_registered():
-    assert set(CHECK_RULES) == ALL_RULE_CODES
+def test_every_rule_has_a_callable_check_function():
+    for rule in ALL_RULES:
+        assert callable(rule.check), rule.code
 
 
-def test_fix_rules_only_reference_known_rule_codes():
-    assert set(FIX_RULES) <= ALL_RULE_CODES
+def test_every_fix_is_callable_or_absent():
+    for rule in ALL_RULES:
+        assert rule.fix is None or callable(rule.fix), rule.code
 
 
-def test_fixable_rule_codes_matches_the_fix_registry():
-    assert FIXABLE_RULE_CODES == set(FIX_RULES)
+def test_fixable_rule_codes_matches_the_rules_declaring_a_fix():
+    assert FIXABLE_RULE_CODES == {r.code for r in ALL_RULES if r.fix is not None}
 
 
-def test_fix_registry_order_is_the_documented_pipeline_order():
+def test_check_only_rules_declare_no_fix():
+    check_only = {r.code for r in ALL_RULES if r.fix is None}
+    assert check_only == ALL_RULE_CODES - FIXABLE_RULE_CODES
+
+
+def test_fix_pipeline_order_is_the_documented_order():
     """DNL002 -> DNL004 -> DNL003 -> DNL001, as documented in the README.
 
     DNL002 can empty a cell that DNL004 then removes, DNL004 clears interior
     empty cells before DNL003 examines trailing ones, and DNL001 runs last on
-    the final cell structure.
+    the final cell structure. This is ALL_RULES order, so reordering the
+    catalog changes what --fix produces.
     """
-    assert list(FIX_RULES) == ["DNL002", "DNL004", "DNL003", "DNL001"]
+    fix_order = [r.code for r in ALL_RULES if r.fix is not None]
+    assert fix_order == ["DNL002", "DNL004", "DNL003", "DNL001"]

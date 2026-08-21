@@ -61,13 +61,6 @@ class Cell(NamedTuple):
     is_separator: bool
 
 
-class Rule(NamedTuple):
-    code: str
-    name: str
-    description: str
-    default: bool = True
-
-
 class Diagnostic(NamedTuple):
     filepath: str
     line: int
@@ -78,30 +71,28 @@ class Diagnostic(NamedTuple):
         return f"{self.filepath}:{self.line}: [{self.code}] {self.message}"
 
 
-ALL_RULES = [
-    Rule("DNL001", "magic-prefix", "Prefix bare magic commands with # MAGIC"),
-    Rule(
-        "DNL002", "leading-blank-lines", "Strip leading blank lines from Python cells"
-    ),
-    Rule(
-        "DNL003",
-        "trailing-empty-cells",
-        "Remove trailing empty cells at end of notebook",
-    ),
-    Rule("DNL004", "empty-cells", "Remove empty cells with no content"),
-    Rule(
-        "DNL005",
-        "no-widget-config",
-        "Disallow reading config via dbutils.widgets.get()/getArgument()",
-        default=False,
-    ),
-]
-ALL_RULE_CODES = {r.code for r in ALL_RULES}
-DEFAULT_RULE_CODES = {r.code for r in ALL_RULES if r.default}
+CheckFunction = Callable[[list[Cell], str], list[Diagnostic]]
+FixFunction = Callable[[list[Cell]], tuple[list[Cell], bool]]
 
-# ALL_RULES is ordered for display. Execution order and which rules have an
-# autofix are defined by CHECK_RULES and FIX_RULES, near the bottom of this
-# module -- they can only be built once the rule functions exist.
+
+class Rule(NamedTuple):
+    """One lint rule: its identity, and the functions implementing it.
+
+    A rule with no *fix* is check-only -- it can fail a run but never rewrites
+    a file.
+    """
+
+    code: str
+    name: str
+    description: str
+    check: CheckFunction
+    fix: FixFunction | None = None
+    default: bool = True
+
+
+# ALL_RULES is the single place a rule is declared; it lives at the bottom of
+# this module because its entries reference the rule functions. Everything
+# else -- the code sets, both dispatch loops, --list-rules -- derives from it.
 
 
 def resolve_rules(
@@ -482,33 +473,56 @@ def _cells_to_text(cells: list[Cell]) -> str:
     return "".join(line for cell in cells for line in cell.lines)
 
 
-CheckFunction = Callable[[list[Cell], str], list[Diagnostic]]
-FixFunction = Callable[[list[Cell]], tuple[list[Cell], bool]]
-
-# Every rule in ALL_RULES must appear here; iteration order is execution order.
-CHECK_RULES: dict[str, CheckFunction] = {
-    "DNL002": _check_leading_blank_lines,
-    "DNL004": _check_empty_cells,
-    "DNL003": _check_trailing_empty_cells,
-    "DNL001": _check_magic_prefixes,
-    "DNL005": _check_widget_config,
-}
-
-# Rules with an autofix, in pipeline order. A rule absent from this mapping is
-# check-only: it can fail a run but never rewrites a file.
+# The rule catalog. Add a rule here and nowhere else.
 #
-# The order matters. DNL002 can turn a cell holding only blank lines into an
-# empty cell, which DNL004 then removes; DNL004 clears interior empty cells
-# before DNL003 looks at trailing ones; DNL001 runs last so it sees the final
-# cell structure.
-FIX_RULES: dict[str, FixFunction] = {
-    "DNL002": _fix_leading_blank_lines,
-    "DNL004": _fix_empty_cells,
-    "DNL003": _fix_trailing_empty_cells,
-    "DNL001": _fix_magic_prefixes,
-}
+# List order is execution order, and for fixes it is load-bearing: DNL002 can
+# turn a cell holding only blank lines into an empty cell, which DNL004 then
+# removes; DNL004 clears interior empty cells before DNL003 looks at trailing
+# ones; DNL001 runs last so it sees the final cell structure. Reordering these
+# entries changes what --fix produces.
+#
+# --list-rules sorts by code, so this order is not what users see.
+ALL_RULES: tuple[Rule, ...] = (
+    Rule(
+        "DNL002",
+        "leading-blank-lines",
+        "Strip leading blank lines from Python cells",
+        check=_check_leading_blank_lines,
+        fix=_fix_leading_blank_lines,
+    ),
+    Rule(
+        "DNL004",
+        "empty-cells",
+        "Remove empty cells with no content",
+        check=_check_empty_cells,
+        fix=_fix_empty_cells,
+    ),
+    Rule(
+        "DNL003",
+        "trailing-empty-cells",
+        "Remove trailing empty cells at end of notebook",
+        check=_check_trailing_empty_cells,
+        fix=_fix_trailing_empty_cells,
+    ),
+    Rule(
+        "DNL001",
+        "magic-prefix",
+        "Prefix bare magic commands with # MAGIC",
+        check=_check_magic_prefixes,
+        fix=_fix_magic_prefixes,
+    ),
+    Rule(
+        "DNL005",
+        "no-widget-config",
+        "Disallow reading config via dbutils.widgets.get()/getArgument()",
+        check=_check_widget_config,
+        default=False,
+    ),
+)
 
-FIXABLE_RULE_CODES = set(FIX_RULES)
+ALL_RULE_CODES = {rule.code for rule in ALL_RULES}
+DEFAULT_RULE_CODES = {rule.code for rule in ALL_RULES if rule.default}
+FIXABLE_RULE_CODES = {rule.code for rule in ALL_RULES if rule.fix is not None}
 
 
 def check_file(
@@ -524,9 +538,9 @@ def check_file(
         active_rules = DEFAULT_RULE_CODES
 
     diagnostics: list[Diagnostic] = []
-    for code, check in CHECK_RULES.items():
-        if code in active_rules:
-            diagnostics.extend(check(cells, filepath))
+    for rule in ALL_RULES:
+        if rule.code in active_rules:
+            diagnostics.extend(rule.check(cells, filepath))
     return diagnostics
 
 
@@ -544,11 +558,12 @@ def fix_file(
 
     applied: set[str] = set()
 
-    for code, fix in FIX_RULES.items():
-        if code in active_rules:
-            cells, changed = fix(cells)
-            if changed:
-                applied.add(code)
+    for rule in ALL_RULES:
+        if rule.fix is None or rule.code not in active_rules:
+            continue
+        cells, changed = rule.fix(cells)
+        if changed:
+            applied.add(rule.code)
 
     if not applied:
         return set()
@@ -685,7 +700,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.list_rules:
-        for rule in ALL_RULES:
+        for rule in sorted(ALL_RULES, key=lambda r: r.code):
             state = "on" if rule.default else "off"
             print(f"{rule.code}  {rule.name:20s}  {state:3s}  {rule.description}")
         return 0
