@@ -8,7 +8,8 @@
 - Configuration in `pyproject.toml` under `[tool.databricks-notebook-linter]`, with `select` and `ignore` keys. The nearest `pyproject.toml` at or above the working directory is used
 - `per-path` config entries, scoping rules to files matching a list of regexes via `select`, `extend-select`, and `ignore`. This is how a rule such as `DNL005` is enabled for one folder without enabling it repository-wide
 - `--config PATH` to read a specific config file, and `--no-config` to ignore configuration
-- Rules can now be off by default (`Rule.default`) and check-only (`Rule.fixable`). `--list-rules` shows each rule's default state
+- Rules can now be off by default (`Rule.default`). `--list-rules` shows each rule's default state
+- `CHECK_RULES` and `FIX_RULES` registries map rule codes to their implementations. Iteration order is execution order, a rule absent from `FIX_RULES` is check-only, and `check_file()`/`fix_file()` dispatch through them instead of a chain of per-rule `if` blocks
 
 ### Changed
 

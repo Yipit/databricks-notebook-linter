@@ -5,7 +5,9 @@ import pytest
 from databricks_notebook_linter.fix_magic import (
     ALL_RULE_CODES,
     ALL_RULES,
+    CHECK_RULES,
     DEFAULT_RULE_CODES,
+    FIX_RULES,
     FIXABLE_RULE_CODES,
     Diagnostic,
     resolve_rules,
@@ -63,3 +65,31 @@ def test_every_rule_code_is_unique():
 def test_diagnostic_str_format():
     d = Diagnostic("notebook.py", 5, "DNL001", "bare magic command")
     assert str(d) == "notebook.py:5: [DNL001] bare magic command"
+
+
+# --- registry invariants -------------------------------------------------
+#
+# CHECK_RULES and FIX_RULES are what check_file()/fix_file() iterate, so a rule
+# added to ALL_RULES but not registered would silently never run.
+
+
+def test_every_rule_has_a_check_function_registered():
+    assert set(CHECK_RULES) == ALL_RULE_CODES
+
+
+def test_fix_rules_only_reference_known_rule_codes():
+    assert set(FIX_RULES) <= ALL_RULE_CODES
+
+
+def test_fixable_rule_codes_matches_the_fix_registry():
+    assert FIXABLE_RULE_CODES == set(FIX_RULES)
+
+
+def test_fix_registry_order_is_the_documented_pipeline_order():
+    """DNL002 -> DNL004 -> DNL003 -> DNL001, as documented in the README.
+
+    DNL002 can empty a cell that DNL004 then removes, DNL004 clears interior
+    empty cells before DNL003 examines trailing ones, and DNL001 runs last on
+    the final cell structure.
+    """
+    assert list(FIX_RULES) == ["DNL002", "DNL004", "DNL003", "DNL001"]

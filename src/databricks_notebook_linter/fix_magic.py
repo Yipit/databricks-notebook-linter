@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections.abc import Callable
 from typing import NamedTuple
 
 from databricks_notebook_linter.config import Config, ConfigError, load_config
@@ -65,7 +66,6 @@ class Rule(NamedTuple):
     name: str
     description: str
     default: bool = True
-    fixable: bool = True
 
 
 class Diagnostic(NamedTuple):
@@ -94,12 +94,14 @@ ALL_RULES = [
         "no-widget-config",
         "Disallow reading config via dbutils.widgets.get()/getArgument()",
         default=False,
-        fixable=False,
     ),
 ]
 ALL_RULE_CODES = {r.code for r in ALL_RULES}
 DEFAULT_RULE_CODES = {r.code for r in ALL_RULES if r.default}
-FIXABLE_RULE_CODES = {r.code for r in ALL_RULES if r.fixable}
+
+# ALL_RULES is ordered for display. Execution order and which rules have an
+# autofix are defined by CHECK_RULES and FIX_RULES, near the bottom of this
+# module -- they can only be built once the rule functions exist.
 
 
 def resolve_rules(
@@ -480,6 +482,35 @@ def _cells_to_text(cells: list[Cell]) -> str:
     return "".join(line for cell in cells for line in cell.lines)
 
 
+CheckFunction = Callable[[list[Cell], str], list[Diagnostic]]
+FixFunction = Callable[[list[Cell]], tuple[list[Cell], bool]]
+
+# Every rule in ALL_RULES must appear here; iteration order is execution order.
+CHECK_RULES: dict[str, CheckFunction] = {
+    "DNL002": _check_leading_blank_lines,
+    "DNL004": _check_empty_cells,
+    "DNL003": _check_trailing_empty_cells,
+    "DNL001": _check_magic_prefixes,
+    "DNL005": _check_widget_config,
+}
+
+# Rules with an autofix, in pipeline order. A rule absent from this mapping is
+# check-only: it can fail a run but never rewrites a file.
+#
+# The order matters. DNL002 can turn a cell holding only blank lines into an
+# empty cell, which DNL004 then removes; DNL004 clears interior empty cells
+# before DNL003 looks at trailing ones; DNL001 runs last so it sees the final
+# cell structure.
+FIX_RULES: dict[str, FixFunction] = {
+    "DNL002": _fix_leading_blank_lines,
+    "DNL004": _fix_empty_cells,
+    "DNL003": _fix_trailing_empty_cells,
+    "DNL001": _fix_magic_prefixes,
+}
+
+FIXABLE_RULE_CODES = set(FIX_RULES)
+
+
 def check_file(
     filepath: str,
     active_rules: set[str] | None = None,
@@ -493,16 +524,9 @@ def check_file(
         active_rules = DEFAULT_RULE_CODES
 
     diagnostics: list[Diagnostic] = []
-    if "DNL002" in active_rules:
-        diagnostics.extend(_check_leading_blank_lines(cells, filepath))
-    if "DNL004" in active_rules:
-        diagnostics.extend(_check_empty_cells(cells, filepath))
-    if "DNL003" in active_rules:
-        diagnostics.extend(_check_trailing_empty_cells(cells, filepath))
-    if "DNL001" in active_rules:
-        diagnostics.extend(_check_magic_prefixes(cells, filepath))
-    if "DNL005" in active_rules:
-        diagnostics.extend(_check_widget_config(cells, filepath))
+    for code, check in CHECK_RULES.items():
+        if code in active_rules:
+            diagnostics.extend(check(cells, filepath))
     return diagnostics
 
 
@@ -520,26 +544,11 @@ def fix_file(
 
     applied: set[str] = set()
 
-    # Pipeline order: DNL002 -> DNL004 -> DNL003 -> DNL001
-    if "DNL002" in active_rules:
-        cells, changed = _fix_leading_blank_lines(cells)
-        if changed:
-            applied.add("DNL002")
-
-    if "DNL004" in active_rules:
-        cells, changed = _fix_empty_cells(cells)
-        if changed:
-            applied.add("DNL004")
-
-    if "DNL003" in active_rules:
-        cells, changed = _fix_trailing_empty_cells(cells)
-        if changed:
-            applied.add("DNL003")
-
-    if "DNL001" in active_rules:
-        cells, changed = _fix_magic_prefixes(cells)
-        if changed:
-            applied.add("DNL001")
+    for code, fix in FIX_RULES.items():
+        if code in active_rules:
+            cells, changed = fix(cells)
+            if changed:
+                applied.add(code)
 
     if not applied:
         return set()
