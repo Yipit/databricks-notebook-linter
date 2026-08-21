@@ -6,4 +6,5 @@
   description: >
     Lints Databricks .py-format notebooks: prefixes bare magic commands with
     # MAGIC, strips leading blank lines, removes empty cells. Pass --fix to
-    rewrite files. Use --select/--ignore to control which rules run.
+    rewrite files. Use --select/--ignore, or a [tool.databricks-notebook-linter]
+    section in pyproject.toml, to control which rules run and where.

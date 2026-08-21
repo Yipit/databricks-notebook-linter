@@ -151,3 +151,13 @@ def test_main_fix_mode_with_select(tmp_path, monkeypatch):
     )
     assert main() == 0
     assert path.read_text() == "# Databricks notebook source\n%pip install foo\n"
+
+
+def test_main_list_rules_prints_in_numeric_code_order(capsys, monkeypatch):
+    """ALL_RULES is in pipeline order; --list-rules must still read numerically."""
+    monkeypatch.setattr("sys.argv", ["fix-databricks-magic", "--list-rules"])
+    assert main() == 0
+
+    codes = [line.split()[0] for line in capsys.readouterr().out.splitlines()]
+    assert codes == sorted(codes)
+    assert codes == ["DNL001", "DNL002", "DNL003", "DNL004", "DNL005"]

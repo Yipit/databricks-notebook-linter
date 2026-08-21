@@ -14,8 +14,15 @@ Databricks exports notebooks as `.py` files with special comment markers. Magic 
 | DNL002 | `leading-blank-lines` | Strip leading blank lines from Python cells | Enabled |
 | DNL003 | `trailing-empty-cells` | Remove trailing empty cells at end of notebook | Enabled |
 | DNL004 | `empty-cells` | Remove empty cells with no content | Enabled |
+| DNL005 | `no-widget-config` | Disallow reading config via `dbutils.widgets.get()` | Disabled |
 
-All rules are enabled by default. Use `--select` and `--ignore` to control which rules run.
+DNL001-DNL004 are enabled by default. DNL005 is opt-in and must be requested
+explicitly, either with `--select` or through a `per-path` config entry. Use
+`--select` and `--ignore` to control which rules run, and
+[configuration](#configuration) to scope a rule to part of the repository.
+
+Every rule except DNL005 has an autofix. DNL005 is check-only: `--fix` reports
+it and exits non-zero without modifying the file.
 
 ### DNL001: magic-prefix
 
@@ -56,6 +63,41 @@ Removes empty cells (and their preceding `# COMMAND ----------` separators) from
 
 Removes empty cells with no content anywhere in the notebook (and their preceding separators). The header cell is never removed.
 
+### DNL005: no-widget-config
+
+Reports any read of notebook config from a widget:
+
+```python
+env = dbutils.widgets.get("env")                    # DNL005
+table = dbutils.widgets.getArgument("table", "x")   # DNL005
+```
+
+`getArgument` is the legacy alias for the same read, so both are flagged.
+Widget *declaration* and removal (`dbutils.widgets.text`, `dropdown`,
+`removeAll`, ...) are not flagged -- the rule targets config reads, not the
+widgets themselves.
+
+Use this when config for a notebook must come from a known place -- a config
+module, a job parameter contract, a settings table -- rather than being pulled
+in ad hoc wherever a value happens to be needed. Because that expectation
+usually applies to some notebooks and not others, DNL005 is off by default and
+is most useful scoped to a path (see [configuration](#configuration)).
+
+This rule has no autofix; there is no way to guess where the value should have
+come from. It reports and fails the run in both check and `--fix` mode.
+
+Detection is line-based, and ignores matches inside comments and single-line
+string literals:
+
+```python
+# env = dbutils.widgets.get("env")             # not flagged, commented out
+msg = "call dbutils.widgets.get for config"    # not flagged, string literal
+# MAGIC env = dbutils.widgets.get("env")       # flagged: Databricks executes this
+```
+
+The known gap is a match inside a multi-line (triple-quoted) string, which is
+reported as a violation.
+
 ### Pipeline order
 
 When multiple rules are active, they run in this order: DNL002 -> DNL004 -> DNL003 -> DNL001. This matters because:
@@ -64,7 +106,89 @@ When multiple rules are active, they run in this order: DNL002 -> DNL004 -> DNL0
 - DNL004 removes interior empty cells before DNL003 checks trailing cells
 - DNL001 runs last so it operates on the final cell structure
 
+DNL005 has no autofix and so takes no part in the pipeline; it is checked
+against the file as read from disk.
+
 All rules are idempotent -- running the tool twice produces the same result.
+
+## Configuration
+
+Rules can be configured in `pyproject.toml` under
+`[tool.databricks-notebook-linter]`. The nearest `pyproject.toml` at or above
+the working directory is used, which is the repository root under pre-commit.
+
+```toml
+[tool.databricks-notebook-linter]
+select = ["DNL001", "DNL002", "DNL003", "DNL004"]
+ignore = []
+```
+
+| Key | Meaning |
+|-----|---------|
+| `select` | The rules that run. Replaces the defaults, so an off-by-default rule listed here is enabled. |
+| `ignore` | Rules removed from the selected set. |
+| `per-path` | A list of tables that adjust the rule set for matching files (below). |
+
+`--select` and `--ignore` on the command line override the corresponding
+config key. `--config PATH` reads a specific file; `--no-config` ignores
+configuration entirely.
+
+### Scoping rules to a path
+
+Each `[[tool.databricks-notebook-linter.per-path]]` entry lists `paths`
+regexes and the adjustment to apply to files matching any of them. This is how
+DNL005 gets enabled for the notebooks whose config should be centralized,
+without imposing it on the rest of the repository:
+
+```toml
+[tool.databricks-notebook-linter]
+select = ["DNL001", "DNL002", "DNL003", "DNL004"]
+
+# DNL001-DNL004 run everywhere; DNL005 only under notebooks/config/.
+[[tool.databricks-notebook-linter.per-path]]
+paths = ["^notebooks/config/"]
+extend-select = ["DNL005"]
+```
+
+| Key | Meaning |
+|-----|---------|
+| `paths` | Required, non-empty. Python regexes, matched with `re.search`. |
+| `extend-select` | Rules added to the active set for matching files. |
+| `ignore` | Rules removed from the active set for matching files. |
+| `select` | Replaces the active set for matching files outright. |
+
+Patterns are matched against the file path relative to the directory holding
+the config file, using forward slashes. Anchor with `^` to match from the
+repository root; omit it to match anywhere in the path:
+
+```toml
+[[tool.databricks-notebook-linter.per-path]]
+# Any notebook under a "config" directory, at any depth.
+paths = ["(^|/)config/"]
+extend-select = ["DNL005"]
+
+[[tool.databricks-notebook-linter.per-path]]
+# Vendored notebooks: check nothing but the magic prefix.
+paths = ["^vendor/"]
+select = ["DNL001"]
+```
+
+Entries are applied in file order, so a later entry can narrow an earlier one:
+
+```toml
+[[tool.databricks-notebook-linter.per-path]]
+paths = ["^notebooks/"]
+extend-select = ["DNL005"]
+
+# ...except the legacy notebooks, which are not migrated yet.
+[[tool.databricks-notebook-linter.per-path]]
+paths = ["^notebooks/legacy/"]
+ignore = ["DNL005"]
+```
+
+An unknown key, an unknown rule code, an empty `paths` list, or an invalid
+regex is an error, and the tool exits 2 rather than silently linting with the
+wrong rule set.
 
 ## Usage
 
@@ -99,7 +223,16 @@ hooks:
   # All rules except empty cell removal
   - id: fix-databricks-magic
     args: [--fix, --ignore, "DNL004"]
+
+  # Defaults plus DNL005 everywhere
+  - id: fix-databricks-magic
+    args: [--fix, --select, "DNL001,DNL002,DNL003,DNL004,DNL005"]
 ```
+
+To scope DNL005 to part of the repository instead, leave it out of `args` and
+configure `per-path` in `pyproject.toml` -- see
+[configuration](#configuration). The hook runs from the repository root, so
+the config file is picked up automatically.
 
 ### As a CLI tool
 
@@ -118,9 +251,16 @@ fix-databricks-magic --fix --select DNL001,DNL002 path/to/notebook.py
 # Ignore specific rules
 fix-databricks-magic --fix --ignore DNL003,DNL004 path/to/notebook.py
 
-# List available rules
+# Read a specific config file, or ignore configuration entirely
+fix-databricks-magic --config path/to/pyproject.toml path/to/notebook.py
+fix-databricks-magic --no-config path/to/notebook.py
+
+# List available rules, with their default state
 fix-databricks-magic --list-rules
 ```
+
+Exit codes: `0` clean, `1` issues found (or files changed under `--fix`), `2`
+bad rule codes or bad configuration.
 
 ### Check mode output
 
@@ -129,12 +269,20 @@ notebook.py:5: [DNL001] bare magic command '%pip install foo' needs '# MAGIC' pr
 notebook.py:10: [DNL001] line in block containing magic needs '# MAGIC' prefix
 notebook.py:3: [DNL002] leading blank line in Python cell
 notebook.py:15: [DNL004] empty cell
+notebook.py:8: [DNL005] dbutils.widgets.get() reads notebook config from a widget; source config explicitly instead
 ```
 
 ### Fix mode output
 
 ```
 Fixed [DNL001, DNL002]: notebook.py
+```
+
+Check-only rules are still reported in fix mode, and still fail the run:
+
+```
+Fixed [DNL001]: notebook.py
+notebook.py:8: [DNL005] dbutils.widgets.get() reads notebook config from a widget; source config explicitly instead
 ```
 
 ## Examples
