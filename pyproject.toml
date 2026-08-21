@@ -5,7 +5,9 @@ description = "Pre-commit hook to fix bare magic commands in Databricks .py-form
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
-dependencies = []
+dependencies = [
+    "tomli>=1.1.0; python_version < '3.11'",
+]
 authors = [
     { name = "YipitData" },
 ]

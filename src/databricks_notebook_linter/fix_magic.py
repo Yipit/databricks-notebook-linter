@@ -17,8 +17,11 @@ Handles:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from typing import NamedTuple
+
+from databricks_notebook_linter.config import Config, ConfigError, load_config
 
 DATABRICKS_HEADER = "# Databricks notebook source"
 CELL_SEPARATOR = "# COMMAND ----------"
@@ -38,6 +41,16 @@ MAGIC_PREFIXES = (
 
 MAGIC_CONTAINS = ("dbutils.library.restartPython()",)
 
+MAGIC_COMMENT_PREFIX = "# MAGIC "
+
+# Single-line string literals, stripped before scanning a line for code so that
+# a method name mentioned inside a string is not mistaken for a call.
+STRING_LITERAL_PATTERN = re.compile(
+    r"'''.*?'''" r'|""".*?"""' r"|'[^'\n]*'" r'|"[^"\n]*"'
+)
+
+WIDGET_READ_PATTERN = re.compile(r"\bdbutils\s*\.\s*widgets\s*\.\s*(getArgument|get)\b")
+
 COMPOUND_CONTINUATIONS = ("elif ", "else:", "except:", "except ", "finally:")
 
 
@@ -51,6 +64,8 @@ class Rule(NamedTuple):
     code: str
     name: str
     description: str
+    default: bool = True
+    fixable: bool = True
 
 
 class Diagnostic(NamedTuple):
@@ -74,14 +89,28 @@ ALL_RULES = [
         "Remove trailing empty cells at end of notebook",
     ),
     Rule("DNL004", "empty-cells", "Remove empty cells with no content"),
+    Rule(
+        "DNL005",
+        "no-widget-config",
+        "Disallow reading config via dbutils.widgets.get()/getArgument()",
+        default=False,
+        fixable=False,
+    ),
 ]
 ALL_RULE_CODES = {r.code for r in ALL_RULES}
+DEFAULT_RULE_CODES = {r.code for r in ALL_RULES if r.default}
+FIXABLE_RULE_CODES = {r.code for r in ALL_RULES if r.fixable}
 
 
 def resolve_rules(
     select: list[str] | None = None,
     ignore: list[str] | None = None,
 ) -> set[str]:
+    """Resolve the active rule codes.
+
+    Without *select*, the default-on rules run. Rules that are off by default
+    (see ``Rule.default``) must be requested explicitly.
+    """
     unknown = set()
     if select:
         unknown |= set(select) - ALL_RULE_CODES
@@ -93,7 +122,7 @@ def resolve_rules(
     if select:
         active = set(select)
     else:
-        active = set(ALL_RULE_CODES)
+        active = set(DEFAULT_RULE_CODES)
 
     if ignore:
         active -= set(ignore)
@@ -414,6 +443,39 @@ def _fix_magic_prefixes(cells: list[Cell]) -> tuple[list[Cell], bool]:
     return new_cells, changed
 
 
+def _code_portion(line: str) -> str:
+    """Return the executable part of a line.
+
+    Drops a ``# MAGIC`` prefix (Databricks still executes those lines), string
+    literals, and trailing comments, so only real code is scanned.
+    """
+    stripped = line.lstrip()
+    if stripped.startswith(MAGIC_COMMENT_PREFIX):
+        stripped = stripped[len(MAGIC_COMMENT_PREFIX) :]
+    return STRING_LITERAL_PATTERN.sub("", stripped).split("#", 1)[0]
+
+
+def _check_widget_config(cells: list[Cell], filepath: str) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    for cell in cells:
+        if cell.is_separator:
+            continue
+        for local_idx, line in enumerate(cell.lines):
+            match = WIDGET_READ_PATTERN.search(_code_portion(line))
+            if match is None:
+                continue
+            diagnostics.append(
+                Diagnostic(
+                    filepath,
+                    cell.start + local_idx + 1,
+                    "DNL005",
+                    f"dbutils.widgets.{match.group(1)}() reads notebook config from "
+                    "a widget; source config explicitly instead",
+                ),
+            )
+    return diagnostics
+
+
 def _cells_to_text(cells: list[Cell]) -> str:
     return "".join(line for cell in cells for line in cell.lines)
 
@@ -428,7 +490,7 @@ def check_file(
 
     _original, cells = result
     if active_rules is None:
-        active_rules = ALL_RULE_CODES
+        active_rules = DEFAULT_RULE_CODES
 
     diagnostics: list[Diagnostic] = []
     if "DNL002" in active_rules:
@@ -439,6 +501,8 @@ def check_file(
         diagnostics.extend(_check_trailing_empty_cells(cells, filepath))
     if "DNL001" in active_rules:
         diagnostics.extend(_check_magic_prefixes(cells, filepath))
+    if "DNL005" in active_rules:
+        diagnostics.extend(_check_widget_config(cells, filepath))
     return diagnostics
 
 
@@ -452,7 +516,7 @@ def fix_file(
 
     original, cells = result
     if active_rules is None:
-        active_rules = ALL_RULE_CODES
+        active_rules = DEFAULT_RULE_CODES
 
     applied: set[str] = set()
 
@@ -490,6 +554,87 @@ def fix_file(
     return applied
 
 
+def _rules_for_path(
+    filepath: str,
+    base_rules: set[str],
+    config: Config | None,
+) -> set[str]:
+    if config is None:
+        return base_rules
+    return config.rules_for(filepath, base_rules)
+
+
+def _split_codes(value: str | None) -> list[str] | None:
+    return value.split(",") if value else None
+
+
+def _resolve_base_rules(args: argparse.Namespace) -> tuple[set[str], Config | None]:
+    """Load configuration and resolve the repository-wide rule set."""
+    config = None if args.no_config else load_config(args.config)
+
+    if config is not None:
+        unknown = config.referenced_codes() - ALL_RULE_CODES
+        if unknown:
+            raise ConfigError(
+                f"{config.path}: unknown rule codes: {', '.join(sorted(unknown))}"
+            )
+
+    file_select = list(config.select) if config and config.select else None
+    file_ignore = list(config.ignore) if config and config.ignore else None
+    select = _split_codes(args.select) or file_select
+    ignore = _split_codes(args.ignore) or file_ignore
+
+    return resolve_rules(select, ignore), config
+
+
+def _notebook_paths(files: list[str]) -> list[str]:
+    return [f for f in files if f.endswith(".py")]
+
+
+def _run_fix(
+    files: list[str],
+    base_rules: set[str],
+    config: Config | None,
+) -> int:
+    changed_files: list[tuple[str, set[str]]] = []
+    diagnostics: list[Diagnostic] = []
+
+    for filepath in _notebook_paths(files):
+        rules = _rules_for_path(filepath, base_rules, config)
+        applied = fix_file(filepath, rules)
+        if applied:
+            changed_files.append((filepath, applied))
+        # Rules with no autofix still have to fail the run.
+        check_only = rules - FIXABLE_RULE_CODES
+        if check_only:
+            diagnostics.extend(check_file(filepath, check_only))
+
+    for filepath, applied in changed_files:
+        print(f"Fixed [{', '.join(sorted(applied))}]: {filepath}")
+    for diagnostic in diagnostics:
+        print(diagnostic)
+
+    return 1 if changed_files or diagnostics else 0
+
+
+def _run_check(
+    files: list[str],
+    base_rules: set[str],
+    config: Config | None,
+) -> int:
+    diagnostics: list[Diagnostic] = []
+    for filepath in _notebook_paths(files):
+        rules = _rules_for_path(filepath, base_rules, config)
+        diagnostics.extend(check_file(filepath, rules))
+
+    if diagnostics:
+        for diagnostic in diagnostics:
+            print(diagnostic)
+        return 1
+
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Lint and fix Databricks .py-format notebooks",
@@ -513,6 +658,17 @@ def main() -> int:
         help="Comma-separated rule codes to disable (e.g. DNL003,DNL004)",
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to a TOML config file (default: nearest pyproject.toml)",
+    )
+    parser.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Ignore any pyproject.toml configuration",
+    )
+    parser.add_argument(
         "--list-rules",
         action="store_true",
         help="Print available rules and exit",
@@ -521,44 +677,20 @@ def main() -> int:
 
     if args.list_rules:
         for rule in ALL_RULES:
-            print(f"{rule.code}  {rule.name:24s}  {rule.description}")
+            state = "on" if rule.default else "off"
+            print(f"{rule.code}  {rule.name:20s}  {state:3s}  {rule.description}")
         return 0
 
-    select = args.select.split(",") if args.select else None
-    ignore = args.ignore.split(",") if args.ignore else None
     try:
-        active_rules = resolve_rules(select, ignore)
+        base_rules, config = _resolve_base_rules(args)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
 
     if args.fix:
-        changed_files: list[tuple[str, set[str]]] = []
-        for filepath in args.files:
-            if filepath.endswith(".py"):
-                applied = fix_file(filepath, active_rules)
-                if applied:
-                    changed_files.append((filepath, applied))
+        return _run_fix(args.files, base_rules, config)
 
-        if changed_files:
-            for f, rules in changed_files:
-                codes = ", ".join(sorted(rules))
-                print(f"Fixed [{codes}]: {f}")
-            return 1
-
-        return 0
-
-    all_diagnostics: list[Diagnostic] = []
-    for filepath in args.files:
-        if filepath.endswith(".py"):
-            all_diagnostics.extend(check_file(filepath, active_rules))
-
-    if all_diagnostics:
-        for d in all_diagnostics:
-            print(d)
-        return 1
-
-    return 0
+    return _run_check(args.files, base_rules, config)
 
 
 if __name__ == "__main__":  # pragma: no cover

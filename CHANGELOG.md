@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `DNL005` (`no-widget-config`): report reads of notebook config via `dbutils.widgets.get()` and `dbutils.widgets.getArgument()`. Off by default and check-only -- it has no autofix, and fails the run in both check and `--fix` mode
+- Configuration in `pyproject.toml` under `[tool.databricks-notebook-linter]`, with `select` and `ignore` keys. The nearest `pyproject.toml` at or above the working directory is used
+- `per-path` config entries, scoping rules to files matching a list of regexes via `select`, `extend-select`, and `ignore`. This is how a rule such as `DNL005` is enabled for one folder without enabling it repository-wide
+- `--config PATH` to read a specific config file, and `--no-config` to ignore configuration
+- Rules can now be off by default (`Rule.default`) and check-only (`Rule.fixable`). `--list-rules` shows each rule's default state
+
+### Changed
+
+- Omitting `--select` now selects the default-on rules rather than every rule, so `DNL005` must be requested explicitly. `check_file()` and `fix_file()` default to the same set
+
 ## 0.2.1
 
 ### Fixed
